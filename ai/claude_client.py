@@ -25,7 +25,7 @@ async def run_conversation(
 
     for _ in range(max_iterations):
         response = await _client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             system=system,
             messages=current_messages,
             tools=TOOLS,
