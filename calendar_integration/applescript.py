@@ -6,6 +6,24 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Formats an AppleScript date as ISO8601 with HKT offset — no shell calls needed.
+_DATE_TO_ISO_HANDLER = """
+on pad2(n)
+    if n < 10 then return "0" & (n as string)
+    return n as string
+end pad2
+
+on dateToISO(d)
+    set t to time of d
+    set hr to t div 3600
+    set mn to (t mod 3600) div 60
+    set sc to t mod 60
+    return (year of d as string) & "-" & my pad2(month of d as integer) & "-" & ¬
+           my pad2(day of d) & "T" & my pad2(hr) & ":" & my pad2(mn) & ":" & ¬
+           my pad2(sc) & "+08:00"
+end dateToISO
+"""
+
 # AppleScript handler that builds a date by setting individual components,
 # avoiding all locale-sensitive date string parsing.
 _MAKE_DATE_HANDLER = """
@@ -21,6 +39,8 @@ on makeDate(yr, mo, dy, hr, mn, sc)
     return d
 end makeDate
 """
+
+_ALL_HANDLERS = _DATE_TO_ISO_HANDLER + _MAKE_DATE_HANDLER
 
 
 def run_applescript(script: str, retries: int = 1) -> str:
@@ -54,7 +74,7 @@ def get_events_script(start_dt: datetime, end_dt: datetime) -> str:
     s = _date_args(start_dt)
     e = _date_args(end_dt)
     return f'''
-{_MAKE_DATE_HANDLER}
+{_ALL_HANDLERS}
 tell application "Calendar"
     set output to ""
     set startDate to my {s}
@@ -63,11 +83,9 @@ tell application "Calendar"
         set evts to (every event of cal whose start date >= startDate and start date < endDate)
         repeat with evt in evts
             set uid to uid of evt
-            set evtStart to start date of evt
-            set evtEnd to end date of evt
-            set startEpoch to (do shell script "date -jf '%A, %B %e, %Y %H:%M:%S' '" & (evtStart as string) & "' '+%s' 2>/dev/null || echo ''")
-            set endEpoch to (do shell script "date -jf '%A, %B %e, %Y %H:%M:%S' '" & (evtEnd as string) & "' '+%s' 2>/dev/null || echo ''")
-            set output to output & "|||" & uid & "|" & startEpoch & "|" & endEpoch & return
+            set startStr to my dateToISO(start date of evt)
+            set endStr to my dateToISO(end date of evt)
+            set output to output & "|||" & uid & "|" & startStr & "|" & endStr & return
         end repeat
     end repeat
     return output
@@ -89,7 +107,7 @@ def create_event_script(
     safe_loc = location.replace('"', '\\"')
     safe_notes = notes.replace('"', '\\"')
     return f'''
-{_MAKE_DATE_HANDLER}
+{_ALL_HANDLERS}
 tell application "Calendar"
     tell calendar "{calendar_name}"
         set startDate to my {s}
