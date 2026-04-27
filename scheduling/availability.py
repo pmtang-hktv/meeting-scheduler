@@ -74,6 +74,17 @@ async def check_slot(
     day_start = datetime.combine(local_date, datetime.min.time(), tzinfo=HKT)
     day_end = day_start + timedelta(days=1)
     cal_events = await get_events(day_start, day_end)
+
+    # Fail-safe: if AppleScript failed we cannot verify calendar conflicts — block the slot.
+    if cal_events is None:
+        logger.warning("Calendar read failed for %s — treating slot as unavailable", local_date)
+        return {
+            "available": False,
+            "requires_owner": False,
+            "reasons": ["calendar_unavailable"],
+            "conflict": True,
+        }
+
     event_intervals: list[tuple[datetime, datetime]] = [(e.start, e.end) for e in cal_events]
 
     # Always check DB-confirmed meetings (reliable even when AppleScript fails)
@@ -130,10 +141,14 @@ async def find_next_available_slots(
     proposed_date = proposed_local.date()
     results: list[datetime] = []
 
-    async def _day_intervals(d: date) -> list[tuple[datetime, datetime]]:
+    async def _day_intervals(d: date) -> list[tuple[datetime, datetime]] | None:
+        """Return occupied intervals for the day, or None if the calendar is unreadable."""
         ds = datetime.combine(d, datetime.min.time(), tzinfo=HKT)
         de = ds + timedelta(days=1)
         cal = await get_events(ds, de)
+        if cal is None:
+            logger.warning("Calendar read failed for %s — skipping day in slot search", d)
+            return None
         intervals = [(e.start, e.end) for e in cal]
         db_mtgs = await get_confirmed_meetings_in_range(
             ds.astimezone(timezone.utc).isoformat(),
@@ -149,6 +164,8 @@ async def find_next_available_slots(
     # --- Same day ---
     if is_business_day(proposed_date):
         intervals = await _day_intervals(proposed_date)
+        if intervals is None:
+            intervals = []  # calendar unreadable — skip same-day candidates
         candidates = find_candidate_slots(proposed_date, duration_mins, intervals)
         valid = [
             c for c in candidates
@@ -187,6 +204,9 @@ async def find_next_available_slots(
             current_date += timedelta(days=1)
             continue
         intervals = await _day_intervals(current_date)
+        if intervals is None:
+            current_date += timedelta(days=1)
+            continue  # calendar unreadable — skip this day
         candidates = find_candidate_slots(current_date, duration_mins, intervals)
         for c in candidates:
             if not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):

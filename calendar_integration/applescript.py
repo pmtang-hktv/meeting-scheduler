@@ -43,8 +43,8 @@ end makeDate
 _ALL_HANDLERS = _DATE_TO_ISO_HANDLER + _MAKE_DATE_HANDLER
 
 
-def run_applescript(script: str, retries: int = 1) -> str:
-    """Run an AppleScript string and return stdout. Retries once on failure."""
+def run_applescript(script: str, retries: int = 1) -> str | None:
+    """Run an AppleScript string and return stdout, or None on error/timeout."""
     for attempt in range(retries + 1):
         try:
             result = subprocess.run(
@@ -62,7 +62,7 @@ def run_applescript(script: str, retries: int = 1) -> str:
             logger.warning("AppleScript timed out (attempt %d)", attempt + 1)
             if attempt < retries:
                 _time.sleep(0.5)
-    return ""
+    return None
 
 
 def _date_args(dt: datetime) -> str:

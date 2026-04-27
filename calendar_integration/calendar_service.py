@@ -26,9 +26,12 @@ class CalendarEvent:
     end: datetime
 
 
-async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent]:
+async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent] | None:
+    """Return calendar events in the range, or None if the calendar could not be read."""
     script = get_events_script(start_dt, end_dt)
     raw = run_applescript(script)
+    if raw is None:
+        return None  # AppleScript failed — caller must treat calendar as unreadable
     events: list[CalendarEvent] = []
     for line in raw.splitlines():
         if not line.startswith("|||"):

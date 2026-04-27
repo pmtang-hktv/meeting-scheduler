@@ -156,6 +156,16 @@ async def _check_and_proceed(
         is_urgent=is_urgent,
     )
 
+    # Calendar temporarily unreadable — don't risk a double-booking
+    if "calendar_unavailable" in result["reasons"]:
+        await update.message.reply_text(
+            "Sorry, I'm having trouble reading the calendar right now. "
+            "Please try again in a moment."
+        )
+        ctx.pop("proposed_dt", None)
+        await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
+        return GATHERING_INFO
+
     # Slot is free, no special rules → auto-confirm
     if result["available"] and not result["requires_owner"]:
         return await _confirm_meeting(update, chat_id, ctx, history, start_dt, duration_mins, location_area)
