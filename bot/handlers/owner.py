@@ -58,11 +58,14 @@ async def _approve_meeting(query, confirmation: dict, meeting: dict) -> None:
     start_dt = datetime.fromisoformat(meeting["start_dt"]).astimezone(HKT)
     end_dt = datetime.fromisoformat(meeting["end_dt"]).astimezone(HKT)
 
+    from bot.handlers.colleague import _event_title, _event_location
+    event_title = _event_title(meeting.get("purpose") or "Meeting", meeting.get("organizer_name") or "")
+    event_location = _event_location(bool(meeting.get("is_external")), meeting.get("location_area"))
     uid = await create_event(
-        title="Meeting",
+        title=event_title,
         start_dt=start_dt,
         end_dt=end_dt,
-        location=meeting.get("location_area") or "",
+        location=event_location,
         notes=meeting.get("purpose") or "",
     )
     await meet_db.update_meeting(

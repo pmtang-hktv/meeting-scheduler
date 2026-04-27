@@ -174,11 +174,13 @@ async def _confirm_meeting(
         )
 
     end_dt = start_dt + timedelta(minutes=duration_mins)
+    event_title = _event_title(ctx["purpose"], ctx["organizer_name"])
+    event_location = _event_location(ctx.get("is_external", False), location_area)
     uid = await create_event(
-        title="Meeting",  # generic title — privacy
+        title=event_title,
         start_dt=start_dt,
         end_dt=end_dt,
-        location=location_area or "",
+        location=event_location,
         notes=ctx.get("purpose", ""),
     )
 
@@ -339,6 +341,19 @@ async def _schedule_location_followups(
             )
             from scheduler.jobs import schedule_location_followup
             schedule_location_followup(fu_id, meeting_id, trigger_dt, job_type)
+
+
+def _event_title(purpose: str, organizer_name: str) -> str:
+    """Format: 'AI Discussion (Simon Tang)'"""
+    clean = purpose.strip().rstrip(".")
+    clean = clean[:1].upper() + clean[1:] if clean else "Meeting"
+    return f"{clean} ({organizer_name})"
+
+
+def _event_location(is_external: bool, location_area: str | None) -> str:
+    if not is_external:
+        return "Office"
+    return location_area or "TBC"
 
 
 # Module-level settings accessor (injected at startup)
