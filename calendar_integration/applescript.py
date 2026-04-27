@@ -6,6 +6,22 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# AppleScript handler that builds a date by setting individual components,
+# avoiding all locale-sensitive date string parsing.
+_MAKE_DATE_HANDLER = """
+on makeDate(yr, mo, dy, hr, mn, sc)
+    set d to current date
+    set time of d to 0
+    set year of d to yr
+    set month of d to 1
+    set day of d to 1
+    set month of d to mo
+    set day of d to dy
+    set time of d to (hr * 3600 + mn * 60 + sc)
+    return d
+end makeDate
+"""
+
 
 def run_applescript(script: str, retries: int = 1) -> str:
     """Run an AppleScript string and return stdout. Retries once on failure."""
@@ -29,30 +45,29 @@ def run_applescript(script: str, retries: int = 1) -> str:
     return ""
 
 
-def _epoch(dt: datetime) -> int:
-    """Convert datetime to Unix epoch seconds."""
-    return int(dt.timestamp())
+def _date_args(dt: datetime) -> str:
+    """Return AppleScript makeDate() call for a datetime."""
+    return f"makeDate({dt.year}, {dt.month}, {dt.day}, {dt.hour}, {dt.minute}, {dt.second})"
 
 
 def get_events_script(start_dt: datetime, end_dt: datetime) -> str:
-    s = _epoch(start_dt)
-    e = _epoch(end_dt)
+    s = _date_args(start_dt)
+    e = _date_args(end_dt)
     return f'''
+{_MAKE_DATE_HANDLER}
 tell application "Calendar"
     set output to ""
-    set startDate to (do shell script "date -r {s} '+%m/%d/%Y %H:%M:%S'")
-    set endDate to (do shell script "date -r {e} '+%m/%d/%Y %H:%M:%S'")
-    set startDate to date startDate
-    set endDate to date endDate
+    set startDate to {s}
+    set endDate to {e}
     repeat with cal in calendars
         set evts to (every event of cal whose start date >= startDate and start date < endDate)
         repeat with evt in evts
             set uid to uid of evt
             set evtStart to start date of evt
             set evtEnd to end date of evt
-            set startStr to do shell script "date -jf '%m/%d/%Y %H:%M:%S' '" & (evtStart as string) & "' '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || echo ''"
-            set endStr to do shell script "date -jf '%m/%d/%Y %H:%M:%S' '" & (evtEnd as string) & "' '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || echo ''"
-            set output to output & "|||" & uid & "|" & startStr & "|" & endStr & return
+            set startEpoch to (do shell script "date -jf '%A, %B %e, %Y %H:%M:%S' '" & (evtStart as string) & "' '+%s' 2>/dev/null || echo ''")
+            set endEpoch to (do shell script "date -jf '%A, %B %e, %Y %H:%M:%S' '" & (evtEnd as string) & "' '+%s' 2>/dev/null || echo ''")
+            set output to output & "|||" & uid & "|" & startEpoch & "|" & endEpoch & return
         end repeat
     end repeat
     return output
@@ -68,17 +83,18 @@ def create_event_script(
     location: str = "",
     notes: str = "",
 ) -> str:
-    s = _epoch(start_dt)
-    e = _epoch(end_dt)
+    s = _date_args(start_dt)
+    e = _date_args(end_dt)
     safe_title = title.replace('"', '\\"')
     safe_loc = location.replace('"', '\\"')
     safe_notes = notes.replace('"', '\\"')
     return f'''
+{_MAKE_DATE_HANDLER}
 tell application "Calendar"
     tell calendar "{calendar_name}"
-        set startDate to (do shell script "date -r {s} '+%m/%d/%Y %H:%M:%S'")
-        set endDate to (do shell script "date -r {e} '+%m/%d/%Y %H:%M:%S'")
-        set newEvent to make new event with properties {{summary:"{safe_title}", start date:date startDate, end date:date endDate, location:"{safe_loc}", description:"{safe_notes}"}}
+        set startDate to {s}
+        set endDate to {e}
+        set newEvent to make new event with properties {{summary:"{safe_title}", start date:startDate, end date:endDate, location:"{safe_loc}", description:"{safe_notes}"}}
         return uid of newEvent
     end tell
 end tell

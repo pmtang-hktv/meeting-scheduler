@@ -38,9 +38,10 @@ async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent
             continue
         uid = parts[3]
         try:
-            start = datetime.fromisoformat(parts[4]).astimezone(HKT)
-            end = datetime.fromisoformat(parts[5]).astimezone(HKT)
-        except ValueError:
+            # get_events_script now returns Unix epoch seconds for start/end
+            start = datetime.fromtimestamp(int(parts[4]), tz=HKT)
+            end = datetime.fromtimestamp(int(parts[5]), tz=HKT)
+        except (ValueError, OSError):
             continue
         events.append(CalendarEvent(uid=uid, start=start, end=end))
     return events
