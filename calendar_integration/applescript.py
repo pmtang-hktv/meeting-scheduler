@@ -1,7 +1,6 @@
 from __future__ import annotations
+import asyncio
 import logging
-import subprocess
-import time as _time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -43,25 +42,47 @@ end makeDate
 _ALL_HANDLERS = _DATE_TO_ISO_HANDLER + _MAKE_DATE_HANDLER
 
 
-def run_applescript(script: str, retries: int = 2, timeout: int = 15) -> str | None:
-    """Run an AppleScript string and return stdout, or None on error/timeout."""
+async def run_applescript(script: str, retries: int = 1, timeout: int = 15) -> str | None:
+    """Run an AppleScript string asynchronously. Returns stdout, or None on error/timeout.
+
+    Async so it doesn't block the asyncio event loop — Ctrl+C and other handlers stay
+    responsive while osascript runs.
+    """
     for attempt in range(retries + 1):
+        proc: asyncio.subprocess.Process | None = None
         try:
-            result = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+            proc = await asyncio.create_subprocess_exec(
+                "osascript", "-e", script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode == 0:
-                return result.stdout.strip()
-            logger.warning("AppleScript error (attempt %d): %s", attempt + 1, result.stderr.strip())
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    pass
+                logger.warning("AppleScript timed out after %ds (attempt %d)", timeout, attempt + 1)
+                if attempt < retries:
+                    await asyncio.sleep(0.5)
+                continue
+            if proc.returncode == 0:
+                return stdout.decode("utf-8", errors="replace").strip()
+            logger.warning(
+                "AppleScript error (attempt %d): %s",
+                attempt + 1, stderr.decode("utf-8", errors="replace").strip(),
+            )
             if attempt < retries:
-                _time.sleep(0.5)
-        except subprocess.TimeoutExpired:
-            logger.warning("AppleScript timed out after %ds (attempt %d)", timeout, attempt + 1)
-            if attempt < retries:
-                _time.sleep(0.5)
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            if proc is not None:
+                proc.kill()
+            raise
+        except Exception:
+            logger.exception("AppleScript subprocess failed unexpectedly")
+            return None
     return None
 
 

@@ -29,7 +29,7 @@ class CalendarEvent:
 async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent] | None:
     """Return calendar events in the range, or None if the calendar could not be read."""
     script = get_events_script(start_dt, end_dt)
-    raw = run_applescript(script)
+    raw = await run_applescript(script)
     if raw is None:
         return None  # AppleScript failed — caller must treat calendar as unreadable
     events: list[CalendarEvent] = []
@@ -57,19 +57,19 @@ async def create_event(
     notes: str = "",
 ) -> str:
     script = create_event_script(_calendar_name, title, start_dt, end_dt, location, notes)
-    uid = run_applescript(script)
-    return uid
+    uid = await run_applescript(script)
+    return uid or ""
 
 
 async def delete_event(uid: str) -> bool:
     script = delete_event_script(uid)
-    result = run_applescript(script)
+    result = await run_applescript(script)
     return result == "deleted"
 
 
 async def find_event(uid: str) -> CalendarEvent | None:
     script = find_event_script(uid)
-    raw = run_applescript(script)
+    raw = await run_applescript(script)
     if not raw:
         return None
     parts = raw.split("|")

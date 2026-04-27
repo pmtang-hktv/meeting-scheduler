@@ -201,7 +201,11 @@ async def find_next_available_slots(
             results.extend(interleaved)
 
     # --- Subsequent days ---
+    # Bail out fast on consecutive calendar failures: if 2 days in a row can't be read,
+    # Calendar.app is likely stuck and we'd otherwise loop for many minutes.
     current_date = proposed_date + timedelta(days=1)
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 2
     for _ in range(30):
         if len(results) >= max_results:
             break
@@ -210,8 +214,16 @@ async def find_next_available_slots(
             continue
         intervals = await _day_intervals(current_date)
         if intervals is None:
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                logger.warning(
+                    "Aborting slot search after %d consecutive calendar failures",
+                    consecutive_failures,
+                )
+                break
             current_date += timedelta(days=1)
-            continue  # calendar unreadable — skip this day
+            continue
+        consecutive_failures = 0
         candidates = find_candidate_slots(current_date, duration_mins, intervals)
         for c in candidates:
             if not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):
