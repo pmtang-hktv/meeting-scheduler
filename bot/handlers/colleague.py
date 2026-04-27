@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ai.intent import process_turn, ConversationTurn
@@ -92,7 +93,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # If intent is not a schedule request, just reply and stay in GATHERING_INFO
     if turn.intent not in ("schedule_request", "reschedule"):
         reply = turn.reply or "How can I help you schedule a meeting?"
-        await update.message.reply_text(reply)
+        await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
@@ -104,7 +105,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if missing:
         reply = turn.reply or f"Could you please tell me the {missing[0].replace('_', ' ')}?"
-        await update.message.reply_text(reply)
+        await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
@@ -160,7 +161,7 @@ async def _check_and_proceed(
                 update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"]
             )
         # Suggest alternatives
-        return await _suggest_alternatives(update, chat_id, ctx, history, start_dt, duration_mins)
+        return await _suggest_alternatives(update, chat_id, ctx, history, proposed_dt=start_dt, duration_mins=duration_mins)
 
     return GATHERING_INFO
 
@@ -274,14 +275,14 @@ async def _suggest_alternatives(
     chat_id: int,
     ctx: dict,
     history: list[dict],
-    after: datetime,
+    proposed_dt: datetime,
     duration_mins: int,
 ) -> int:
-    slots = await find_next_available_slots(after, duration_mins, max_results=3)
+    slots = await find_next_available_slots(proposed_dt, duration_mins, max_results=5)
     if not slots:
         await update.message.reply_text(
             "That time is not available and I couldn't find a free slot nearby. "
-            "Please suggest a different time."
+            "Please suggest a different date or time."
         )
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
@@ -290,7 +291,7 @@ async def _suggest_alternatives(
     ctx["alternative_slots"] = [s.isoformat() for s in slots]
 
     await update.message.reply_text(
-        "That time is not available. Here are the next free slots:",
+        "That time is not available. Here are some alternative slots:",
         reply_markup=slot_choice_keyboard(formatted),
     )
     await conv_db.upsert_conversation(chat_id, "SUGGESTING_ALTERNATIVES", ctx, history)
@@ -311,6 +312,19 @@ async def handle_slot_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
         name = json.loads(row["context_json"]).get("organizer_name") if row else None
         await conv_db.reset_conversation(chat_id, known_name=name)
         return ConversationHandler.END
+
+    if data == "slot:other_date":
+        await query.edit_message_text(
+            "No problem — please suggest another date and time that works for you."
+        )
+        row = await conv_db.get_conversation(chat_id)
+        if row:
+            ctx = json.loads(row["context_json"])
+            history = json.loads(row["history_json"])
+            ctx.pop("proposed_dt", None)
+            ctx.pop("alternative_slots", None)
+            await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
+        return GATHERING_INFO
 
     parts = data.split(":", 2)
     if len(parts) < 3:

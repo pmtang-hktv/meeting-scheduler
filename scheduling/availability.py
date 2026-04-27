@@ -111,41 +111,87 @@ async def check_slot(
 
 
 async def find_next_available_slots(
-    after: datetime,
+    proposed_dt: datetime,
     duration_mins: int,
-    max_results: int = 3,
+    max_results: int = 5,
 ) -> list[datetime]:
-    """Find the next N free slots of given duration starting after `after`."""
-    results: list[datetime] = []
-    current_date = after.astimezone(HKT).date()
-    max_days = 30
+    """
+    Find up to max_results free slots relative to proposed_dt.
 
-    for _ in range(max_days):
+    Priority order:
+    1. Same day: earlier slots before proposed time
+    2. Same day: later slots after proposed time
+    3. Ensure opposite AM/PM coverage on same day is near the front
+    4. Subsequent business days if more slots needed
+    """
+    now = datetime.now(tz=HKT)
+    proposed_local = proposed_dt.astimezone(HKT)
+    proposed_date = proposed_local.date()
+    results: list[datetime] = []
+
+    async def _day_intervals(d: date) -> list[tuple[datetime, datetime]]:
+        ds = datetime.combine(d, datetime.min.time(), tzinfo=HKT)
+        de = ds + timedelta(days=1)
+        cal = await get_events(ds, de)
+        intervals = [(e.start, e.end) for e in cal]
+        db_mtgs = await get_confirmed_meetings_in_range(
+            ds.astimezone(timezone.utc).isoformat(),
+            de.astimezone(timezone.utc).isoformat(),
+        )
+        for m in db_mtgs:
+            ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
+            me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
+            if (ms, me) not in intervals:
+                intervals.append((ms, me))
+        return intervals
+
+    # --- Same day ---
+    if is_business_day(proposed_date):
+        intervals = await _day_intervals(proposed_date)
+        candidates = find_candidate_slots(proposed_date, duration_mins, intervals)
+        valid = [
+            c for c in candidates
+            if c != proposed_local
+            and c > now + timedelta(minutes=15)
+            and not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins))
+        ]
+
+        before = sorted([c for c in valid if c < proposed_local], reverse=True)  # nearest first
+        after  = sorted([c for c in valid if c > proposed_local])                 # nearest first
+
+        # Interleave after/before so we get a mix of times around the proposed slot
+        interleaved: list[datetime] = []
+        ai, bi = 0, 0
+        while ai < len(after) or bi < len(before):
+            if ai < len(after):
+                interleaved.append(after[ai]); ai += 1
+            if bi < len(before):
+                interleaved.append(before[bi]); bi += 1
+
+        # Ensure at least one slot from the opposite half-day (AM vs PM) is near the top
+        proposed_is_am = proposed_local.hour < 13
+        opposite = [s for s in interleaved if (s.hour < 12) != proposed_is_am]
+        if opposite and interleaved and opposite[0] != interleaved[0]:
+            interleaved.remove(opposite[0])
+            interleaved.insert(0, opposite[0])
+
+        results.extend(interleaved)
+
+    # --- Subsequent days ---
+    current_date = proposed_date + timedelta(days=1)
+    for _ in range(30):
+        if len(results) >= max_results:
+            break
         if not is_business_day(current_date):
             current_date += timedelta(days=1)
             continue
-
-        day_start = datetime.combine(current_date, datetime.min.time(), tzinfo=HKT)
-        day_end = day_start + timedelta(days=1)
-        cal_events = await get_events(day_start, day_end)
-        event_intervals = [(e.start, e.end) for e in cal_events]
-        db_meetings = await get_confirmed_meetings_in_range(
-            day_start.astimezone(timezone.utc).isoformat(),
-            day_end.astimezone(timezone.utc).isoformat(),
-        )
-        for m in db_meetings:
-            ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
-            me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
-            if (ms, me) not in event_intervals:
-                event_intervals.append((ms, me))
-
-        candidates = find_candidate_slots(current_date, duration_mins, event_intervals)
+        intervals = await _day_intervals(current_date)
+        candidates = find_candidate_slots(current_date, duration_mins, intervals)
         for c in candidates:
-            if c > after and not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):
+            if not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):
                 results.append(c)
                 if len(results) >= max_results:
-                    return results
-
+                    break
         current_date += timedelta(days=1)
 
-    return results
+    return results[:max_results]

@@ -113,7 +113,7 @@ async def _reject_meeting(query, confirmation: dict, meeting: dict) -> None:
         slots = await find_next_available_slots(
             datetime.fromisoformat(meeting["start_dt"]),
             meeting["duration_mins"],
-            max_results=3,
+            max_results=5,
         )
         if slots:
             formatted = "\n".join(
