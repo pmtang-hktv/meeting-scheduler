@@ -125,18 +125,20 @@ async def check_slot(
         me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
         if (ms, me) not in event_intervals:
             event_intervals.append((ms, me))
-        # Block the travel window before any external meeting so new bookings
-        # cannot eat into the departure buffer.
+        # Block departure and return travel windows around external meetings.
         t_mins = m.get("travel_mins") or 0
         if t_mins > 0:
-            travel_buf = (ms - timedelta(minutes=t_mins), ms)
-            if travel_buf not in event_intervals:
-                event_intervals.append(travel_buf)
+            travel_buf_before = (ms - timedelta(minutes=t_mins), ms)
+            if travel_buf_before not in event_intervals:
+                event_intervals.append(travel_buf_before)
+            travel_buf_after = (me, me + timedelta(minutes=t_mins))
+            if travel_buf_after not in event_intervals:
+                event_intervals.append(travel_buf_after)
 
-    # For external meetings, also check the travel window before the meeting.
-    # If any existing event overlaps [start - travel_mins, start], the slot is blocked.
+    # Check the full travel window around the proposed meeting (departure + return).
     travel_start = start_dt - timedelta(minutes=travel_mins) if travel_mins > 0 else start_dt
-    conflict = _overlaps_any(travel_start, end_dt, event_intervals)
+    travel_end   = end_dt   + timedelta(minutes=travel_mins) if travel_mins > 0 else end_dt
+    conflict = _overlaps_any(travel_start, travel_end, event_intervals)
 
     if conflict:
         if is_vip:
@@ -178,6 +180,7 @@ async def find_next_available_slots(
     proposed_dt: datetime,
     duration_mins: int,
     max_results: int = 5,
+    travel_mins: int = 0,
 ) -> list[datetime]:
     """
     Find up to max_results free slots relative to proposed_dt.
@@ -219,9 +222,12 @@ async def find_next_available_slots(
                 intervals.append((ms, me))
             t_mins = m.get("travel_mins") or 0
             if t_mins > 0:
-                travel_buf = (ms - timedelta(minutes=t_mins), ms)
-                if travel_buf not in intervals:
-                    intervals.append(travel_buf)
+                travel_buf_before = (ms - timedelta(minutes=t_mins), ms)
+                if travel_buf_before not in intervals:
+                    intervals.append(travel_buf_before)
+                travel_buf_after = (me, me + timedelta(minutes=t_mins))
+                if travel_buf_after not in intervals:
+                    intervals.append(travel_buf_after)
         return intervals
 
     # --- Same day ---
@@ -237,6 +243,11 @@ async def find_next_available_slots(
                 if c != proposed_local
                 and c > now + timedelta(minutes=15)
                 and not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins))
+                and (travel_mins == 0 or not _overlaps_any(
+                    c - timedelta(minutes=travel_mins),
+                    c + timedelta(minutes=duration_mins + travel_mins),
+                    intervals,
+                ))
             ]
 
             before = sorted([c for c in valid if c < proposed_local], reverse=True)  # nearest first
@@ -286,10 +297,17 @@ async def find_next_available_slots(
         consecutive_failures = 0
         candidates = find_candidate_slots(current_date, duration_mins, intervals)
         for c in candidates:
-            if not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):
-                results.append(c)
-                if len(results) >= max_results:
-                    break
+            if overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):
+                continue
+            if travel_mins > 0 and _overlaps_any(
+                c - timedelta(minutes=travel_mins),
+                c + timedelta(minutes=duration_mins + travel_mins),
+                intervals,
+            ):
+                continue
+            results.append(c)
+            if len(results) >= max_results:
+                break
         current_date += timedelta(days=1)
 
     return results[:max_results]

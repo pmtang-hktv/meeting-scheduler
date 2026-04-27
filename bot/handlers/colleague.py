@@ -223,7 +223,7 @@ async def _check_and_proceed(
     # Slot is free but requires owner approval
     if result["available"] and result["requires_owner"]:
         return await _request_owner_approval(
-            update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"]
+            update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"], travel_mins=travel_mins
         )
 
     # Slot is blocked
@@ -231,11 +231,11 @@ async def _check_and_proceed(
         if result["requires_owner"]:
             # VIP/urgent conflict — notify owner
             return await _request_owner_approval(
-                update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"]
+                update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"], travel_mins=travel_mins
             )
         # Suggest alternatives (clear proposed_dt so the user must pick a new one)
         ctx.pop("proposed_dt", None)
-        return await _suggest_alternatives(update, chat_id, ctx, history, proposed_dt=start_dt, duration_mins=duration_mins)
+        return await _suggest_alternatives(update, chat_id, ctx, history, proposed_dt=start_dt, duration_mins=duration_mins, travel_mins=travel_mins)
 
     return GATHERING_INFO
 
@@ -300,6 +300,7 @@ async def _request_owner_approval(
     duration_mins: int,
     location_area: str | None,
     reasons: list[str],
+    travel_mins: int = 0,
 ) -> int:
     start_utc = start_dt.astimezone(timezone.utc).isoformat()
     end_dt = start_dt + timedelta(minutes=duration_mins)
@@ -312,6 +313,7 @@ async def _request_owner_approval(
         duration_mins=duration_mins,
         is_external=ctx.get("is_external", False),
         location_area=location_area,
+        travel_mins=travel_mins,
     )
     confirmation_id = await pend_db.create_confirmation(meeting_id, ",".join(reasons))
     ctx["meeting_id"] = meeting_id
@@ -360,8 +362,9 @@ async def _suggest_alternatives(
     history: list[dict],
     proposed_dt: datetime,
     duration_mins: int,
+    travel_mins: int = 0,
 ) -> int:
-    slots = await find_next_available_slots(proposed_dt, duration_mins, max_results=5)
+    slots = await find_next_available_slots(proposed_dt, duration_mins, max_results=5, travel_mins=travel_mins)
     if not slots:
         await update.message.reply_text(
             "That time is not available and I couldn't find a free slot nearby. "
