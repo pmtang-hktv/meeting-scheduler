@@ -57,8 +57,8 @@ def get_events_script(start_dt: datetime, end_dt: datetime) -> str:
 {_MAKE_DATE_HANDLER}
 tell application "Calendar"
     set output to ""
-    set startDate to {s}
-    set endDate to {e}
+    set startDate to my {s}
+    set endDate to my {e}
     repeat with cal in calendars
         set evts to (every event of cal whose start date >= startDate and start date < endDate)
         repeat with evt in evts
@@ -92,8 +92,8 @@ def create_event_script(
 {_MAKE_DATE_HANDLER}
 tell application "Calendar"
     tell calendar "{calendar_name}"
-        set startDate to {s}
-        set endDate to {e}
+        set startDate to my {s}
+        set endDate to my {e}
         set newEvent to make new event with properties {{summary:"{safe_title}", start date:startDate, end date:endDate, location:"{safe_loc}", description:"{safe_notes}"}}
         return uid of newEvent
     end tell
