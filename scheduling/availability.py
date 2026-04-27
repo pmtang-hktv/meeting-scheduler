@@ -17,6 +17,23 @@ from scheduling.rules import (
     _overlaps_any,
 )
 
+def _merged_duration_mins(intervals: list[tuple[datetime, datetime]]) -> int:
+    """Total occupied minutes after merging overlapping intervals."""
+    if not intervals:
+        return 0
+    sorted_iv = sorted(intervals, key=lambda x: x[0])
+    merged_end = sorted_iv[0][0]
+    total = 0
+    for s, e in sorted_iv:
+        if s >= merged_end:
+            total += int((e - s).total_seconds()) // 60
+            merged_end = e
+        elif e > merged_end:
+            total += int((e - merged_end).total_seconds()) // 60
+            merged_end = e
+    return total
+
+
 OWNER_REQUIRES_APPROVAL_REASONS = {
     "outside_hours",
     "long_meeting",
@@ -90,10 +107,11 @@ async def check_slot(
 
     event_intervals: list[tuple[datetime, datetime]] = [(e.start, e.end) for e in cal_events]
 
-    # Always check DB-confirmed meetings (reliable even when AppleScript fails)
+    # Merge DB-confirmed meetings for the whole day (not just the proposed slot window)
+    # so the daily cap sees every confirmed meeting, not only those overlapping the proposal.
     db_meetings = await get_confirmed_meetings_in_range(
-        start_dt.astimezone(timezone.utc).isoformat(),
-        end_dt.astimezone(timezone.utc).isoformat(),
+        day_start.astimezone(timezone.utc).isoformat(),
+        day_end.astimezone(timezone.utc).isoformat(),
     )
     for m in db_meetings:
         ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
@@ -109,9 +127,19 @@ async def check_slot(
         elif is_urgent:
             reasons.append("urgent_conflict")
 
-    # Daily cap check (skip for VIP/urgent overrides)
-    booked = daily_booked_minutes([{"duration_mins": int((e[1] - e[0]).total_seconds()) // 60} for e in event_intervals])
-    if booked + duration_mins > MAX_DAILY_MEETING_MINS and not (is_vip or is_urgent):
+    # Daily cap: use merged intervals so overlapping calendar events are not double-counted.
+    booked = _merged_duration_mins(event_intervals)
+    cap_hit = booked + duration_mins > MAX_DAILY_MEETING_MINS and not (is_vip or is_urgent)
+    logger.info(
+        "check_slot %s+%dmin: conflict=%s, booked=%dmin, cap_hit=%s, reasons=%s",
+        start_dt.astimezone(HKT).strftime("%Y-%m-%d %H:%M"),
+        duration_mins,
+        conflict,
+        booked,
+        cap_hit,
+        reasons,
+    )
+    if cap_hit:
         conflict = True
 
     requires_owner = bool(reasons)
