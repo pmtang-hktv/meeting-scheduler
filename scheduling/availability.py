@@ -131,13 +131,17 @@ async def check_slot(
     booked = _merged_duration_mins(event_intervals)
     cap_hit = booked + duration_mins > MAX_DAILY_MEETING_MINS and not (is_vip or is_urgent)
     logger.info(
-        "check_slot %s+%dmin: conflict=%s, booked=%dmin, cap_hit=%s, reasons=%s",
+        "check_slot %s+%dmin: conflict=%s, booked=%dmin, cap_hit=%s, reasons=%s | "
+        "%d interval(s): %s",
         start_dt.astimezone(HKT).strftime("%Y-%m-%d %H:%M"),
         duration_mins,
         conflict,
         booked,
         cap_hit,
         reasons,
+        len(event_intervals),
+        [(s.astimezone(HKT).strftime("%H:%M"), e.astimezone(HKT).strftime("%H:%M"))
+         for s, e in sorted(event_intervals)],
     )
     if cap_hit:
         conflict = True
