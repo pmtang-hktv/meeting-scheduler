@@ -32,6 +32,7 @@ async def post_init(application: Application) -> None:
     settings: Settings = application.bot_data["settings"]
     await init_db(settings.db_path)
     logger.info("Database initialised at %s", settings.db_path)
+    start_scheduler(settings.db_path)
 
 
 def build_application(settings: Settings) -> Application:
@@ -50,7 +51,6 @@ def build_application(settings: Settings) -> Application:
     owner_handler.configure(app.bot, settings)
     colleague.set_settings(settings)
     configure_scheduler(app.bot, settings.db_path)
-    start_scheduler(settings.db_path)
 
     # Conversation handler for colleague messages
     conv_handler = ConversationHandler(
