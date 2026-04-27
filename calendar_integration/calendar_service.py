@@ -55,12 +55,20 @@ async def _get_all_calendar_ids() -> list[str]:
     cals = await google_cal_client.api_list_calendars()
     if cals:
         for cal in cals:
-            logger.info("Monitoring calendar: %s (id=%s, role=%s)",
+            logger.info("Calendar available: %s (id=%s, role=%s)",
                         cal.get("summary"), cal.get("id"), cal.get("accessRole"))
-        _all_calendar_ids = [c["id"] for c in cals]
+        # Only use calendars the authenticated user OWNS — shared/team calendars
+        # (role=writer) contain other people's events and should not block the
+        # executive's availability.
+        owner_cals = [c for c in cals if c.get("accessRole") == "owner"]
+        if owner_cals:
+            _all_calendar_ids = [c["id"] for c in owner_cals]
+        else:
+            _all_calendar_ids = [await _get_write_calendar_id()]
     else:
         _all_calendar_ids = [await _get_write_calendar_id()]
-    logger.info("Total: %d calendar(s) for conflict checking", len(_all_calendar_ids))
+    logger.info("Monitoring %d owned calendar(s) for conflicts: %s",
+                len(_all_calendar_ids), _all_calendar_ids)
     return _all_calendar_ids
 
 
@@ -123,6 +131,11 @@ async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent
                 if not uid or uid in seen_uids:
                     continue
                 seen_uids.add(uid)
+                # Skip all-day events (date only, no dateTime). These are typically
+                # informational entries — other people's annual leave, multi-day trips,
+                # public holidays — not blocks on the executive's own time.
+                if "dateTime" not in item.get("start", {}):
+                    continue
                 s = _parse_dt(item.get("start", {}))
                 e = _parse_dt(item.get("end", {}))
                 if s and e:
