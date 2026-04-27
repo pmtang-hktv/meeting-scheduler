@@ -53,8 +53,14 @@ async def _get_all_calendar_ids() -> list[str]:
     if _all_calendar_ids is not None:
         return _all_calendar_ids
     cals = await google_cal_client.api_list_calendars()
-    _all_calendar_ids = [c["id"] for c in cals] if cals else [await _get_write_calendar_id()]
-    logger.info("Checking %d calendar(s) for conflicts", len(_all_calendar_ids))
+    if cals:
+        for cal in cals:
+            logger.info("Monitoring calendar: %s (id=%s, role=%s)",
+                        cal.get("summary"), cal.get("id"), cal.get("accessRole"))
+        _all_calendar_ids = [c["id"] for c in cals]
+    else:
+        _all_calendar_ids = [await _get_write_calendar_id()]
+    logger.info("Total: %d calendar(s) for conflict checking", len(_all_calendar_ids))
     return _all_calendar_ids
 
 
@@ -105,6 +111,13 @@ async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent
             if items is None:
                 continue
             any_success = True
+            if items:
+                logger.info(
+                    "Calendar %s: %d event(s): %s", cal_id, len(items),
+                    [(i.get("summary", "(no title)"),
+                      i.get("start", {}).get("dateTime") or i.get("start", {}).get("date"))
+                     for i in items],
+                )
             for item in items:
                 uid = item.get("id", "")
                 if not uid or uid in seen_uids:
