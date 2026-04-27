@@ -6,7 +6,7 @@ from .database import get_db
 
 
 async def get_conversation(chat_id: int) -> dict[str, Any] | None:
-    async with await get_db() as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM conversations WHERE chat_id = ?", (chat_id,)
         ) as cursor:
@@ -23,7 +23,7 @@ async def upsert_conversation(
     history: list[dict[str, Any]],
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             """
             INSERT INTO conversations (chat_id, state, context_json, history_json, updated_at)

@@ -16,7 +16,7 @@ async def create_meeting(
     travel_mins: int | None = None,
 ) -> int:
     now = datetime.now(timezone.utc).isoformat()
-    async with await get_db() as db:
+    async with get_db() as db:
         cursor = await db.execute(
             """
             INSERT INTO meetings
@@ -34,7 +34,7 @@ async def create_meeting(
 
 
 async def get_meeting(meeting_id: int) -> dict[str, Any] | None:
-    async with await get_db() as db:
+    async with get_db() as db:
         async with db.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
@@ -44,13 +44,13 @@ async def update_meeting(meeting_id: int, **fields: Any) -> None:
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     values = list(fields.values()) + [meeting_id]
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(f"UPDATE meetings SET {set_clause} WHERE id = ?", values)
         await db.commit()
 
 
 async def get_unconfirmed_location_meetings() -> list[dict[str, Any]]:
-    async with await get_db() as db:
+    async with get_db() as db:
         async with db.execute(
             "SELECT * FROM meetings WHERE location_confirmed = 0 AND status = 'confirmed'"
         ) as cur:

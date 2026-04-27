@@ -38,7 +38,7 @@ def _fetch_from_maps(origin: str, destination: str, api_key: str) -> int | None:
 
 
 async def _get_cached(destination_area: str) -> int | None:
-    async with await get_db() as db:
+    async with get_db() as db:
         async with db.execute(
             """
             SELECT travel_mins FROM travel_cache
@@ -52,7 +52,7 @@ async def _get_cached(destination_area: str) -> int | None:
 
 
 async def _cache_result(destination_area: str, travel_mins: int) -> None:
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             """
             INSERT INTO travel_cache (destination_area, travel_mins)
