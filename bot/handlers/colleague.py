@@ -86,6 +86,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ctx["proposed_dt"] = turn.proposed_dt.isoformat()
     if turn.is_external:
         ctx["is_external"] = True
+    elif ctx.get("is_external") and not ctx.get("location_area") and not turn.is_external:
+        # Claude re-assessed as internal (e.g. user said "it's at the office").
+        # Trust the correction since the full conversation history was passed.
+        ctx["is_external"] = False
     if turn.location_area:
         ctx["location_area"] = turn.location_area
     ctx["is_vip"] = ctx.get("is_vip", False) or turn.is_vip
@@ -326,6 +330,19 @@ async def _request_owner_approval(
     )
     if msg_id:
         await pend_db.set_owner_message_id(confirmation_id, msg_id)
+    else:
+        # Notification failed — cancel the pending records so they don't hang forever.
+        logger.error("Owner notification failed for confirmation %d — cancelling meeting %d", confirmation_id, meeting_id)
+        await meet_db.update_meeting(meeting_id, status="cancelled")
+        await pend_db.resolve_confirmation(confirmation_id, "rejected")
+        ctx.pop("meeting_id", None)
+        ctx.pop("confirmation_id", None)
+        await update.message.reply_text(
+            "Sorry, I was unable to reach the approver right now. "
+            "Please try submitting your request again in a few minutes."
+        )
+        await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
+        return GATHERING_INFO
 
     owner_name = (context_settings().owner_name if context_settings() else None) or "the executive"
     await update.message.reply_text(

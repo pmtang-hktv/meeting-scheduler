@@ -125,6 +125,13 @@ async def check_slot(
         me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
         if (ms, me) not in event_intervals:
             event_intervals.append((ms, me))
+        # Block the travel window before any external meeting so new bookings
+        # cannot eat into the departure buffer.
+        t_mins = m.get("travel_mins") or 0
+        if t_mins > 0:
+            travel_buf = (ms - timedelta(minutes=t_mins), ms)
+            if travel_buf not in event_intervals:
+                event_intervals.append(travel_buf)
 
     # For external meetings, also check the travel window before the meeting.
     # If any existing event overlaps [start - travel_mins, start], the slot is blocked.
@@ -210,6 +217,11 @@ async def find_next_available_slots(
             me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
             if (ms, me) not in intervals:
                 intervals.append((ms, me))
+            t_mins = m.get("travel_mins") or 0
+            if t_mins > 0:
+                travel_buf = (ms - timedelta(minutes=t_mins), ms)
+                if travel_buf not in intervals:
+                    intervals.append(travel_buf)
         return intervals
 
     # --- Same day ---
