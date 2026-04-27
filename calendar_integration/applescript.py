@@ -42,7 +42,7 @@ end makeDate
 _ALL_HANDLERS = _DATE_TO_ISO_HANDLER + _MAKE_DATE_HANDLER
 
 
-async def run_applescript(script: str, retries: int = 1, timeout: int = 30) -> str | None:
+async def run_applescript(script: str, retries: int = 1, timeout: int = 60) -> str | None:
     """Run an AppleScript string asynchronously. Returns stdout, or None on error/timeout.
 
     Async so it doesn't block the asyncio event loop — Ctrl+C and other handlers stay
