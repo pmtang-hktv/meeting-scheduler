@@ -3,24 +3,59 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from .applescript import (
-    run_applescript,
-    get_events_script,
-    create_event_script,
-    delete_event_script,
-    find_event_script,
-)
+
+from . import google_cal_client
 
 logger = logging.getLogger(__name__)
 HKT = ZoneInfo("Asia/Hong_Kong")
+
 _calendar_name: str = "HKTV"
+_write_calendar_id: str | None = None
+_all_calendar_ids: list[str] | None = None
+
+# Cache calendar reads for 60s — avoids hitting the API multiple times
+# during a single booking flow (check_slot, find_next_available_slots, etc.)
+_CACHE_TTL = 60.0
+_events_cache: dict[tuple[str, str], tuple[float, list["CalendarEvent"]]] = {}
+_cache_lock = asyncio.Lock()
 
 
 def configure(calendar_name: str) -> None:
-    global _calendar_name
+    global _calendar_name, _write_calendar_id, _all_calendar_ids
     _calendar_name = calendar_name
+    _write_calendar_id = None
+    _all_calendar_ids = None
+
+
+def _invalidate_events_cache() -> None:
+    _events_cache.clear()
+
+
+async def _get_write_calendar_id() -> str:
+    global _write_calendar_id
+    if _write_calendar_id:
+        return _write_calendar_id
+    cals = await google_cal_client.api_list_calendars()
+    for cal in cals:
+        if cal.get("summary") == _calendar_name:
+            _write_calendar_id = cal["id"]
+            logger.info("Write calendar '%s' → %s", _calendar_name, _write_calendar_id)
+            return _write_calendar_id
+    logger.warning("Calendar '%s' not found — defaulting to 'primary'", _calendar_name)
+    _write_calendar_id = "primary"
+    return _write_calendar_id
+
+
+async def _get_all_calendar_ids() -> list[str]:
+    global _all_calendar_ids
+    if _all_calendar_ids is not None:
+        return _all_calendar_ids
+    cals = await google_cal_client.api_list_calendars()
+    _all_calendar_ids = [c["id"] for c in cals] if cals else [await _get_write_calendar_id()]
+    logger.info("Checking %d calendar(s) for conflicts", len(_all_calendar_ids))
+    return _all_calendar_ids
 
 
 @dataclass
@@ -30,21 +65,21 @@ class CalendarEvent:
     end: datetime
 
 
-# In-memory cache for get_events. The HKTV calendar is slow (~36s per query),
-# and a single booking flow may query the same day repeatedly via check_slot
-# and find_next_available_slots. Caching for 60s avoids paying that cost over
-# and over within one user interaction. Cache is invalidated on create/delete.
-_CACHE_TTL = 60.0
-_events_cache: dict[tuple[str, str], tuple[float, list["CalendarEvent"]]] = {}
-_cache_lock = asyncio.Lock()
-
-
-def _invalidate_events_cache() -> None:
-    _events_cache.clear()
+def _parse_dt(item_dt: dict) -> datetime | None:
+    """Parse a Google Calendar event start/end dict to a HKT datetime."""
+    raw = item_dt.get("dateTime") or item_dt.get("date")
+    if not raw:
+        return None
+    if "T" not in raw:
+        raw += "T00:00:00+08:00"
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(HKT)
+    except ValueError:
+        return None
 
 
 async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent] | None:
-    """Return calendar events in the range, or None if the calendar could not be read."""
+    """Return events across all writable calendars. Returns None only if every calendar failed."""
     key = (start_dt.isoformat(), end_dt.isoformat())
     now = time.monotonic()
 
@@ -52,34 +87,39 @@ async def get_events(start_dt: datetime, end_dt: datetime) -> list[CalendarEvent
     if cached and now - cached[0] < _CACHE_TTL:
         return list(cached[1])
 
-    # Lock per-call to prevent thundering herd (concurrent requesters won't all
-    # fire 36s queries — they'll wait for the in-flight one to populate the cache).
     async with _cache_lock:
         cached = _events_cache.get(key)
         if cached and time.monotonic() - cached[0] < _CACHE_TTL:
             return list(cached[1])
 
-        script = get_events_script(start_dt, end_dt)
-        raw = await run_applescript(script)
-        if raw is None:
-            return None  # AppleScript failed — caller must treat calendar as unreadable
+        time_min = start_dt.astimezone(timezone.utc).isoformat()
+        time_max = end_dt.astimezone(timezone.utc).isoformat()
+        cal_ids = await _get_all_calendar_ids()
+
+        seen_uids: set[str] = set()
         events: list[CalendarEvent] = []
-        for line in raw.splitlines():
-            if not line.startswith("|||"):
+        any_success = False
+
+        for cal_id in cal_ids:
+            items = await google_cal_client.api_get_events(cal_id, time_min, time_max)
+            if items is None:
                 continue
-            parts = line.split("|")
-            if len(parts) < 6:
-                continue
-            uid = parts[3]
-            try:
-                start = datetime.fromisoformat(parts[4]).astimezone(HKT)
-                end = datetime.fromisoformat(parts[5]).astimezone(HKT)
-            except ValueError:
-                continue
-            events.append(CalendarEvent(uid=uid, start=start, end=end))
+            any_success = True
+            for item in items:
+                uid = item.get("id", "")
+                if not uid or uid in seen_uids:
+                    continue
+                seen_uids.add(uid)
+                s = _parse_dt(item.get("start", {}))
+                e = _parse_dt(item.get("end", {}))
+                if s and e:
+                    events.append(CalendarEvent(uid=uid, start=s, end=e))
+
+        if not any_success:
+            return None
 
         _events_cache[key] = (time.monotonic(), list(events))
-        logger.debug("Cached %d events for %s..%s", len(events), key[0], key[1])
+        logger.debug("Cached %d events for %s..%s", len(events), start_dt.date(), end_dt.date())
         return events
 
 
@@ -90,30 +130,35 @@ async def create_event(
     location: str = "",
     notes: str = "",
 ) -> str:
-    script = create_event_script(_calendar_name, title, start_dt, end_dt, location, notes)
-    uid = await run_applescript(script)
-    _invalidate_events_cache()  # new event must be visible on next read
-    return uid or ""
+    cal_id = await _get_write_calendar_id()
+    body = {
+        "summary": title,
+        "location": location,
+        "description": notes,
+        "start": {"dateTime": start_dt.astimezone(timezone.utc).isoformat(), "timeZone": "Asia/Hong_Kong"},
+        "end": {"dateTime": end_dt.astimezone(timezone.utc).isoformat(), "timeZone": "Asia/Hong_Kong"},
+    }
+    uid = await google_cal_client.api_create_event(cal_id, body)
+    if uid:
+        _invalidate_events_cache()
+    return uid
 
 
 async def delete_event(uid: str) -> bool:
-    script = delete_event_script(uid)
-    result = await run_applescript(script)
-    _invalidate_events_cache()
-    return result == "deleted"
+    cal_id = await _get_write_calendar_id()
+    ok = await google_cal_client.api_delete_event(cal_id, uid)
+    if ok:
+        _invalidate_events_cache()
+    return ok
 
 
 async def find_event(uid: str) -> CalendarEvent | None:
-    script = find_event_script(uid)
-    raw = await run_applescript(script)
-    if not raw:
+    cal_id = await _get_write_calendar_id()
+    item = await google_cal_client.api_get_event(cal_id, uid)
+    if not item:
         return None
-    parts = raw.split("|")
-    if len(parts) < 3:
+    s = _parse_dt(item.get("start", {}))
+    e = _parse_dt(item.get("end", {}))
+    if not s or not e:
         return None
-    try:
-        start = datetime.fromisoformat(parts[1]).astimezone(HKT)
-        end = datetime.fromisoformat(parts[2]).astimezone(HKT)
-        return CalendarEvent(uid=parts[0], start=start, end=end)
-    except ValueError:
-        return None
+    return CalendarEvent(uid=item["id"], start=s, end=e)

@@ -6,6 +6,7 @@ import sys
 
 from config.settings import load_settings
 from bot.main import build_application
+from calendar_integration.google_cal_client import authenticate
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     settings = load_settings()
+    # Authenticate with Google Calendar before starting the async event loop.
+    # First run: a browser window will open for OAuth. After that, the token is
+    # stored in data/google_token.json and refreshed automatically.
+    authenticate()
     app = build_application(settings)
 
     def _shutdown(sig, frame):
