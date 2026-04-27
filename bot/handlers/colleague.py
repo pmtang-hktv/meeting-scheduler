@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ai.intent import process_turn, ConversationTurn
 from bot.keyboards import slot_choice_keyboard
-from calendar_integration.calendar_service import create_event
+from calendar_integration.calendar_service import create_event, delete_event
 from db import conversations as conv_db, meetings as meet_db, pending as pend_db, follow_ups as fu_db
 from notifications import owner_notify
 from scheduling.availability import check_slot, find_next_available_slots
@@ -109,10 +109,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Explicit cancellation
     if turn.intent == "cancel":
-        await update.message.reply_text(
-            "No problem — feel free to message me whenever you'd like to schedule a meeting.",
-            parse_mode=ParseMode.HTML,
-        )
+        meeting = None
+        meeting_id = ctx.get("meeting_id")
+        if meeting_id:
+            meeting = await meet_db.get_meeting(meeting_id)
+            if meeting and meeting.get("status") != "confirmed":
+                meeting = None
+
+        if not meeting:
+            meeting = await meet_db.get_latest_confirmed_meeting(chat_id)
+
+        if meeting:
+            cal_uid = meeting.get("calendar_uid")
+            if cal_uid:
+                await delete_event(cal_uid)
+            await meet_db.update_meeting(meeting["id"], status="cancelled")
+            start_dt = datetime.fromisoformat(meeting["start_dt"]).astimezone(HKT)
+            local_start = start_dt.strftime("%A %d %B at %H:%M HKT")
+            reply_msg = f"Done — your meeting on {local_start} has been cancelled."
+        else:
+            reply_msg = "No problem — feel free to message me whenever you'd like to schedule a meeting."
+
+        await update.message.reply_text(reply_msg, parse_mode=ParseMode.HTML)
         await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
         return ConversationHandler.END
 
@@ -407,7 +425,7 @@ async def _schedule_location_followups(
                 job_type=job_type,
             )
             from scheduler.jobs import schedule_location_followup
-            schedule_location_followup(fu_id, meeting_id, trigger_dt, job_type)
+            await schedule_location_followup(fu_id, meeting_id, trigger_dt, job_type)
 
 
 def _md_to_html(text: str) -> str:

@@ -34,7 +34,7 @@ def start_scheduler(db_path: str) -> AsyncIOScheduler:
     return _scheduler
 
 
-def schedule_location_followup(
+async def schedule_location_followup(
     fu_id: int,
     meeting_id: int,
     trigger_dt: datetime,
@@ -52,9 +52,7 @@ def schedule_location_followup(
         replace_existing=True,
         misfire_grace_time=300,
     )
-    asyncio.get_event_loop().run_until_complete(
-        fu_db.set_apscheduler_id(fu_id, job_id)
-    )
+    await fu_db.set_apscheduler_id(fu_id, job_id)
 
 
 async def _location_chase_job(fu_id: int, meeting_id: int) -> None:
