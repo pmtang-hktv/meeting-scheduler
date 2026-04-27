@@ -97,7 +97,7 @@ async def _approve_meeting(query, confirmation: dict, meeting: dict) -> None:
         datetime.fromisoformat(meeting["start_dt"]),
         bool(meeting.get("is_external")),
     )
-    await conv_db.reset_conversation(meeting["requester_chat_id"])
+    await conv_db.reset_conversation(meeting["requester_chat_id"], known_name=meeting.get("organizer_name"))
 
 
 async def _reject_meeting(query, confirmation: dict, meeting: dict) -> None:

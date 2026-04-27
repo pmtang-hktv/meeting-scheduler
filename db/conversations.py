@@ -39,5 +39,6 @@ async def upsert_conversation(
         await db.commit()
 
 
-async def reset_conversation(chat_id: int) -> None:
-    await upsert_conversation(chat_id, "IDLE", {}, [])
+async def reset_conversation(chat_id: int, known_name: str | None = None) -> None:
+    ctx = {"organizer_name": known_name} if known_name else {}
+    await upsert_conversation(chat_id, "IDLE", ctx, [])

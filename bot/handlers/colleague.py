@@ -57,6 +57,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ctx: dict = json.loads(row["context_json"]) if row else {}
     history: list[dict] = json.loads(row["history_json"]) if row else []
 
+    # Greet returning users and pre-fill their name so the bot doesn't ask again
+    known_name = ctx.get("organizer_name")
+    if known_name and not history:
+        history = [
+            {"role": "user", "content": f"My name is {known_name}."},
+            {"role": "assistant", "content": f"Welcome back, {known_name}! How can I help you today?"},
+        ]
+
     turn: ConversationTurn = await process_turn(history, text)
 
     # Update history (keep last 20 turns to avoid unbounded growth)
@@ -209,7 +217,7 @@ async def _confirm_meeting(
         if ctx.get("is_external")
         else f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
     )
-    await conv_db.reset_conversation(chat_id)
+    await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
     return ConversationHandler.END
 
 
@@ -299,7 +307,9 @@ async def handle_slot_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
     data = query.data or ""
     if data == "slot:cancel":
         await query.edit_message_text("Cancelled. Feel free to propose a different time.")
-        await conv_db.reset_conversation(chat_id)
+        row = await conv_db.get_conversation(chat_id)
+        name = json.loads(row["context_json"]).get("organizer_name") if row else None
+        await conv_db.reset_conversation(chat_id, known_name=name)
         return ConversationHandler.END
 
     parts = data.split(":", 2)

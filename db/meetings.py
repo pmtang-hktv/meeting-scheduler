@@ -55,3 +55,17 @@ async def get_unconfirmed_location_meetings() -> list[dict[str, Any]]:
             "SELECT * FROM meetings WHERE location_confirmed = 0 AND status = 'confirmed'"
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_confirmed_meetings_in_range(start_iso: str, end_iso: str) -> list[dict[str, Any]]:
+    """Return confirmed meetings whose time overlaps [start_iso, end_iso)."""
+    async with get_db() as db:
+        async with db.execute(
+            """
+            SELECT * FROM meetings
+            WHERE status = 'confirmed'
+              AND start_dt < ? AND end_dt > ?
+            """,
+            (end_iso, start_iso),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]

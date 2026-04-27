@@ -1,7 +1,8 @@
 from __future__ import annotations
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from calendar_integration.calendar_service import get_events
+from db.meetings import get_confirmed_meetings_in_range
 from scheduling.rules import (
     HKT,
     is_business_day,
@@ -68,11 +69,22 @@ async def check_slot(
     if is_external:
         reasons.append("external")
 
-    # Get existing calendar events for the day
+    # Get existing events: Apple Calendar + bot DB (DB is authoritative for bot meetings)
     day_start = datetime.combine(local_date, datetime.min.time(), tzinfo=HKT)
     day_end = day_start + timedelta(days=1)
-    events = await get_events(day_start, day_end)
-    event_intervals = [(e.start, e.end) for e in events]
+    cal_events = await get_events(day_start, day_end)
+    event_intervals: list[tuple[datetime, datetime]] = [(e.start, e.end) for e in cal_events]
+
+    # Always check DB-confirmed meetings (reliable even when AppleScript fails)
+    db_meetings = await get_confirmed_meetings_in_range(
+        start_dt.astimezone(timezone.utc).isoformat(),
+        end_dt.astimezone(timezone.utc).isoformat(),
+    )
+    for m in db_meetings:
+        ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
+        me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
+        if (ms, me) not in event_intervals:
+            event_intervals.append((ms, me))
 
     conflict = _overlaps_any(start_dt, end_dt, event_intervals)
 
@@ -83,7 +95,7 @@ async def check_slot(
             reasons.append("urgent_conflict")
 
     # Daily cap check (skip for VIP/urgent overrides)
-    booked = daily_booked_minutes([{"duration_mins": (e.end - e.start).seconds // 60} for e in events])
+    booked = daily_booked_minutes([{"duration_mins": int((e[1] - e[0]).total_seconds()) // 60} for e in event_intervals])
     if booked + duration_mins > MAX_DAILY_MEETING_MINS and not (is_vip or is_urgent):
         conflict = True
 
@@ -115,8 +127,17 @@ async def find_next_available_slots(
 
         day_start = datetime.combine(current_date, datetime.min.time(), tzinfo=HKT)
         day_end = day_start + timedelta(days=1)
-        events = await get_events(day_start, day_end)
-        event_intervals = [(e.start, e.end) for e in events]
+        cal_events = await get_events(day_start, day_end)
+        event_intervals = [(e.start, e.end) for e in cal_events]
+        db_meetings = await get_confirmed_meetings_in_range(
+            day_start.astimezone(timezone.utc).isoformat(),
+            day_end.astimezone(timezone.utc).isoformat(),
+        )
+        for m in db_meetings:
+            ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
+            me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
+            if (ms, me) not in event_intervals:
+                event_intervals.append((ms, me))
 
         candidates = find_candidate_slots(current_date, duration_mins, event_intervals)
         for c in candidates:
