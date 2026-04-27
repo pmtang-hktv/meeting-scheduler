@@ -13,6 +13,7 @@ class Settings:
     default_calendar_name: str
     db_path: str
     office_address: str
+    owner_name: str
 
 
 def load_settings() -> Settings:
@@ -25,6 +26,7 @@ def load_settings() -> Settings:
         default_calendar_name=os.getenv("DEFAULT_CALENDAR_NAME", "HKTV"),
         db_path=os.getenv("DB_PATH", "data/bot.db"),
         office_address=os.getenv("OFFICE_ADDRESS", "1 Chun Cheong Street, Tseung Kwan O, Hong Kong"),
+        owner_name=os.getenv("OWNER_NAME", "Simon"),
     )
 
 

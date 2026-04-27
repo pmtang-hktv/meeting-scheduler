@@ -185,12 +185,21 @@ async def _check_and_proceed(
     is_urgent = ctx.get("is_urgent", False)
     location_area = ctx.get("location_area")
 
+    # For external meetings, fetch travel time upfront so check_slot can enforce the buffer.
+    travel_mins = 0
+    settings = context_settings()
+    if is_external and location_area and settings and settings.google_maps_api_key:
+        travel_mins = await get_travel_minutes(
+            settings.office_address, location_area, settings.google_maps_api_key
+        ) or 0
+
     result = await check_slot(
         start_dt=start_dt,
         duration_mins=duration_mins,
         is_external=is_external,
         is_vip=is_vip,
         is_urgent=is_urgent,
+        travel_mins=travel_mins,
     )
 
     # Calendar temporarily unreadable — don't risk a double-booking
@@ -205,7 +214,7 @@ async def _check_and_proceed(
 
     # Slot is free, no special rules → auto-confirm
     if result["available"] and not result["requires_owner"]:
-        return await _confirm_meeting(update, chat_id, ctx, history, start_dt, duration_mins, location_area)
+        return await _confirm_meeting(update, chat_id, ctx, history, start_dt, duration_mins, location_area, travel_mins)
 
     # Slot is free but requires owner approval
     if result["available"] and result["requires_owner"]:
@@ -235,13 +244,8 @@ async def _confirm_meeting(
     start_dt: datetime,
     duration_mins: int,
     location_area: str | None,
+    travel_mins: int = 0,
 ) -> int:
-    settings = context_settings()
-    travel_mins: int | None = None
-    if ctx.get("is_external") and location_area and settings:
-        travel_mins = await get_travel_minutes(
-            settings.office_address, location_area, settings.google_maps_api_key
-        )
 
     end_dt = start_dt + timedelta(minutes=duration_mins)
     event_title = _event_title(ctx["purpose"], ctx["organizer_name"])
@@ -323,8 +327,9 @@ async def _request_owner_approval(
     if msg_id:
         await pend_db.set_owner_message_id(confirmation_id, msg_id)
 
+    owner_name = (context_settings().owner_name if context_settings() else None) or "the executive"
     await update.message.reply_text(
-        "Your request has been forwarded to the executive for approval. "
+        f"Your request has been forwarded to {owner_name} for approval. "
         "You will be notified once a decision is made."
     )
     await conv_db.upsert_conversation(chat_id, "AWAITING_OWNER_DECISION", ctx, history)

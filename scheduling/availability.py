@@ -50,6 +50,7 @@ async def check_slot(
     is_external: bool = False,
     is_vip: bool = False,
     is_urgent: bool = False,
+    travel_mins: int = 0,
 ) -> dict:
     """
     Returns:
@@ -125,7 +126,10 @@ async def check_slot(
         if (ms, me) not in event_intervals:
             event_intervals.append((ms, me))
 
-    conflict = _overlaps_any(start_dt, end_dt, event_intervals)
+    # For external meetings, also check the travel window before the meeting.
+    # If any existing event overlaps [start - travel_mins, start], the slot is blocked.
+    travel_start = start_dt - timedelta(minutes=travel_mins) if travel_mins > 0 else start_dt
+    conflict = _overlaps_any(travel_start, end_dt, event_intervals)
 
     if conflict:
         if is_vip:
