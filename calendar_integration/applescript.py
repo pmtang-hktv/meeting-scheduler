@@ -101,13 +101,21 @@ tell application "Calendar"
     set startDate to my {s}
     set endDate to my {e}
     repeat with cal in calendars
-        set evts to (every event of cal whose start date >= startDate and start date < endDate)
-        repeat with evt in evts
-            set uid to uid of evt
-            set startStr to my dateToISO(start date of evt)
-            set endStr to my dateToISO(end date of evt)
-            set output to output & "|||" & uid & "|" & startStr & "|" & endStr & return
-        end repeat
+        try
+            -- Skip read-only / subscribed calendars (holidays, sports etc) — they don't
+            -- represent the owner's bookable schedule and are often very slow to query.
+            if writable of cal then
+                set evts to (every event of cal whose start date >= startDate and start date < endDate)
+                repeat with evt in evts
+                    set uid to uid of evt
+                    set startStr to my dateToISO(start date of evt)
+                    set endStr to my dateToISO(end date of evt)
+                    set output to output & "|||" & uid & "|" & startStr & "|" & endStr & return
+                end repeat
+            end if
+        on error
+            -- One slow/broken calendar should not fail the whole query.
+        end try
     end repeat
     return output
 end tell
