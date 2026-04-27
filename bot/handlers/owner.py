@@ -140,6 +140,12 @@ async def _reject_meeting(query, confirmation: dict, meeting: dict) -> None:
         ctx = json.loads(row["context_json"])
         ctx.pop("confirmation_id", None)
         ctx.pop("meeting_id", None)
+        # Clear meeting-time fields so the next message must supply a fresh time —
+        # otherwise the rejected time persists and re-triggers the same approval flow.
+        ctx.pop("proposed_dt", None)
+        ctx.pop("alternative_slots", None)
+        ctx.pop("is_vip", None)
+        ctx.pop("is_urgent", None)
         await conv_db.upsert_conversation(
             meeting["requester_chat_id"], "GATHERING_INFO", ctx,
             json.loads(row["history_json"])
