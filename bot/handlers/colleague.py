@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -117,14 +118,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Not a scheduling intent and fields still missing — just reply conversationally
     if turn.intent not in ("schedule_request", "reschedule"):
-        reply = turn.reply or "How can I help you schedule a meeting?"
+        reply = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
         await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
     # Scheduling intent but still missing required fields — ask for the next one
     if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous"):
-        reply = turn.reply
+        reply = _md_to_html(turn.reply)
     else:
         field_label = missing[0].replace("_", " ")
         reply = f"Could you please provide the <b>{field_label}</b>?"
@@ -156,6 +157,7 @@ async def _check_and_proceed(
     )
 
     if "lunch_block" in result["reasons"]:
+        ctx.pop("proposed_dt", None)  # force user to propose a new time
         await update.message.reply_text(
             "That time overlaps with the lunch break (12:30–14:00). "
             "Please propose a different time."
@@ -180,7 +182,8 @@ async def _check_and_proceed(
             return await _request_owner_approval(
                 update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"]
             )
-        # Suggest alternatives
+        # Suggest alternatives (clear proposed_dt so the user must pick a new one)
+        ctx.pop("proposed_dt", None)
         return await _suggest_alternatives(update, chat_id, ctx, history, proposed_dt=start_dt, duration_mins=duration_mins)
 
     return GATHERING_INFO
@@ -385,6 +388,11 @@ async def _schedule_location_followups(
             )
             from scheduler.jobs import schedule_location_followup
             schedule_location_followup(fu_id, meeting_id, trigger_dt, job_type)
+
+
+def _md_to_html(text: str) -> str:
+    """Convert **markdown bold** to <b>HTML bold</b> so Telegram renders it correctly."""
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
 
 
 def _event_title(purpose: str, organizer_name: str) -> str:
