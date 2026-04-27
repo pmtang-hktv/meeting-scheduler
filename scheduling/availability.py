@@ -165,38 +165,40 @@ async def find_next_available_slots(
         return intervals
 
     # --- Same day ---
+    # Only suggest same-day slots if we can actually read the calendar for that day.
+    # An empty intervals list means "no events" — so if AppleScript fails we MUST skip,
+    # otherwise every slot in business hours falsely looks free.
     if is_business_day(proposed_date):
         intervals = await _day_intervals(proposed_date)
-        if intervals is None:
-            intervals = []  # calendar unreadable — skip same-day candidates
-        candidates = find_candidate_slots(proposed_date, duration_mins, intervals)
-        valid = [
-            c for c in candidates
-            if c != proposed_local
-            and c > now + timedelta(minutes=15)
-            and not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins))
-        ]
+        if intervals is not None:
+            candidates = find_candidate_slots(proposed_date, duration_mins, intervals)
+            valid = [
+                c for c in candidates
+                if c != proposed_local
+                and c > now + timedelta(minutes=15)
+                and not overlaps_lunch_block(c, c + timedelta(minutes=duration_mins))
+            ]
 
-        before = sorted([c for c in valid if c < proposed_local], reverse=True)  # nearest first
-        after  = sorted([c for c in valid if c > proposed_local])                 # nearest first
+            before = sorted([c for c in valid if c < proposed_local], reverse=True)  # nearest first
+            after  = sorted([c for c in valid if c > proposed_local])                 # nearest first
 
-        # Interleave after/before so we get a mix of times around the proposed slot
-        interleaved: list[datetime] = []
-        ai, bi = 0, 0
-        while ai < len(after) or bi < len(before):
-            if ai < len(after):
-                interleaved.append(after[ai]); ai += 1
-            if bi < len(before):
-                interleaved.append(before[bi]); bi += 1
+            # Interleave after/before so we get a mix of times around the proposed slot
+            interleaved: list[datetime] = []
+            ai, bi = 0, 0
+            while ai < len(after) or bi < len(before):
+                if ai < len(after):
+                    interleaved.append(after[ai]); ai += 1
+                if bi < len(before):
+                    interleaved.append(before[bi]); bi += 1
 
-        # Ensure at least one slot from the opposite half-day (AM vs PM) is near the top
-        proposed_is_am = proposed_local.hour < 13
-        opposite = [s for s in interleaved if (s.hour < 12) != proposed_is_am]
-        if opposite and interleaved and opposite[0] != interleaved[0]:
-            interleaved.remove(opposite[0])
-            interleaved.insert(0, opposite[0])
+            # Ensure at least one slot from the opposite half-day (AM vs PM) is near the top
+            proposed_is_am = proposed_local.hour < 13
+            opposite = [s for s in interleaved if (s.hour < 12) != proposed_is_am]
+            if opposite and interleaved and opposite[0] != interleaved[0]:
+                interleaved.remove(opposite[0])
+                interleaved.insert(0, opposite[0])
 
-        results.extend(interleaved)
+            results.extend(interleaved)
 
     # --- Subsequent days ---
     current_date = proposed_date + timedelta(days=1)
