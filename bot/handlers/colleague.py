@@ -116,6 +116,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
         return ConversationHandler.END
 
+    # When the user is in SUGGESTING_ALTERNATIVES and types a free-text message
+    # (instead of clicking a button), keep them in that state rather than dropping to
+    # GATHERING_INFO. This prevents Claude's conversational reply from being shown
+    # without an actual calendar check (e.g. "how about 10am?" generating "I've
+    # updated your request…" without ever calling check_slot).
+    if state == "SUGGESTING_ALTERNATIVES":
+        # If Claude understood a new time but didn't extract it via the structured tool,
+        # show Claude's reply AND prompt the user to be specific so the next message
+        # triggers a proper availability check.
+        if turn.reply:
+            await update.message.reply_text(_md_to_html(turn.reply), parse_mode=ParseMode.HTML)
+        await update.message.reply_text(
+            "Please tap one of the slot buttons above, or tell me a specific date and time "
+            "(e.g. <b>10am tomorrow</b> or <b>Tuesday 3pm</b>) so I can check availability for you.",
+            parse_mode=ParseMode.HTML,
+        )
+        await conv_db.upsert_conversation(chat_id, "SUGGESTING_ALTERNATIVES", ctx, history)
+        return SUGGESTING_ALTERNATIVES
+
     # Not a scheduling intent and fields still missing — just reply conversationally
     if turn.intent not in ("schedule_request", "reschedule"):
         reply = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
