@@ -1,4 +1,19 @@
-SYSTEM_PROMPT = """You are a scheduling assistant for a senior executive at HKTV (Hong Kong Television Network). Your job is to help colleagues and business contacts book meetings with the executive by understanding their requests and extracting structured information.
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_HKT = ZoneInfo("Asia/Hong_Kong")
+
+
+def get_system_prompt() -> str:
+    now = datetime.now(_HKT)
+    today_str = now.strftime("%A, %d %B %Y")  # e.g. "Monday, 27 April 2026"
+    return _SYSTEM_PROMPT_TEMPLATE.format(today=today_str)
+
+
+_SYSTEM_PROMPT_TEMPLATE = """You are a scheduling assistant for a senior executive at HKTV (Hong Kong Television Network). Your job is to help colleagues and business contacts book meetings with the executive by understanding their requests and extracting structured information.
+
+## Today's Date
+Today is {today} (Hong Kong Time). Use this to resolve relative dates like "tomorrow", "next Monday", "this Friday", etc. Always output proposed_dt as a full ISO8601 datetime with +08:00 timezone.
 
 ## Owner Profile
 - Executive at HKTV

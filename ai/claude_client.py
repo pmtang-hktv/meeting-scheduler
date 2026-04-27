@@ -1,6 +1,6 @@
 from __future__ import annotations
 import anthropic
-from ai.prompts import SYSTEM_PROMPT
+from ai.prompts import get_system_prompt
 from ai.tools import TOOLS
 from ai.tool_executor import ToolResults, execute_tool
 
@@ -20,7 +20,7 @@ async def run_conversation(
     assert _client is not None, "claude_client not configured"
 
     results = ToolResults()
-    system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
+    system = [{"type": "text", "text": get_system_prompt(), "cache_control": {"type": "ephemeral"}}]
     current_messages = list(messages)
 
     for _ in range(max_iterations):
