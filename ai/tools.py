@@ -119,24 +119,24 @@ TOOLS = [
     },
     {
         "name": "generate_reply",
-        "description": "Generate a natural language reply to send to the requester.",
+        "description": (
+            "Generate a reply ONLY when you need to ask the requester for a missing field "
+            "or to clarify an ambiguous request. Do NOT use this tool to confirm bookings, "
+            "report availability, or say the meeting has been logged — the Python system "
+            "handles all of that after you return."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "reply": {
                     "type": "string",
-                    "description": "The reply message text.",
+                    "description": "The question or clarification to ask the requester.",
                 },
                 "reply_type": {
                     "type": "string",
                     "enum": [
                         "ask_missing_info",
-                        "confirm_details",
-                        "meeting_confirmed",
-                        "slot_unavailable",
-                        "suggest_alternatives",
-                        "awaiting_owner",
-                        "meeting_cancelled",
+                        "clarify_ambiguous",
                         "general",
                     ],
                 },

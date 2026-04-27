@@ -104,12 +104,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     missing = [f for f in required if not ctx.get(f)]
 
     if missing:
-        reply = turn.reply or f"Could you please tell me the {missing[0].replace('_', ' ')}?"
+        # Safety: only send Claude's reply if it's asking for info, not a premature confirmation
+        if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous", "general"):
+            reply = turn.reply
+        else:
+            field_label = missing[0].replace("_", " ")
+            reply = f"Could you please provide the <b>{field_label}</b>?"
         await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
-    # All fields collected — check availability
+    # All fields collected — proceed to availability check (never send Claude's reply here)
     return await _check_and_proceed(update, context, chat_id, ctx, history)
 
 
