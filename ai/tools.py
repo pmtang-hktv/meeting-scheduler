@@ -137,7 +137,6 @@ TOOLS = [
                     "enum": [
                         "ask_missing_info",
                         "clarify_ambiguous",
-                        "general",
                     ],
                 },
             },

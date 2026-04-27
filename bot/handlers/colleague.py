@@ -105,7 +105,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if missing:
         # Safety: only send Claude's reply if it's asking for info, not a premature confirmation
-        if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous", "general"):
+        if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous"):
             reply = turn.reply
         else:
             field_label = missing[0].replace("_", " ")
