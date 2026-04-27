@@ -20,6 +20,7 @@ OWNER_REQUIRES_APPROVAL_REASONS = {
     "external",
     "vip_conflict",
     "urgent_conflict",
+    "lunch_block",
 }
 
 
@@ -52,11 +53,11 @@ async def check_slot(
         if "outside_hours" not in reasons:
             reasons.append("outside_hours")
 
-    # Lunch block — hard stop
+    # Lunch block — requires owner approval
     if overlaps_lunch_block(start_dt, end_dt):
         return {
             "available": False,
-            "requires_owner": False,
+            "requires_owner": True,
             "reasons": ["lunch_block"],
             "conflict": True,
         }

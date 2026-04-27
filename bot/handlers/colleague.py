@@ -156,15 +156,6 @@ async def _check_and_proceed(
         is_urgent=is_urgent,
     )
 
-    if "lunch_block" in result["reasons"]:
-        ctx.pop("proposed_dt", None)  # force user to propose a new time
-        await update.message.reply_text(
-            "That time overlaps with the lunch break (12:30–14:00). "
-            "Please propose a different time."
-        )
-        await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
-        return GATHERING_INFO
-
     # Slot is free, no special rules → auto-confirm
     if result["available"] and not result["requires_owner"]:
         return await _confirm_meeting(update, chat_id, ctx, history, start_dt, duration_mins, location_area)

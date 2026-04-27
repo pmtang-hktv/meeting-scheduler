@@ -44,6 +44,7 @@ async def send_owner_confirmation_request(
         "external": "External party",
         "vip_conflict": "VIP conflict",
         "urgent_conflict": "Urgent request — conflict",
+        "lunch_block": "Overlaps lunch break (12:30–14:00)",
     }
     reason_text = "\n".join(f"• {reason_labels.get(r, r)}" for r in reasons)
     loc_line = f"\nLocation area: {location_area}" if location_area else ""
