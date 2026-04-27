@@ -1,8 +1,11 @@
 from __future__ import annotations
+import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from calendar_integration.calendar_service import get_events
 from db.meetings import get_confirmed_meetings_in_range
+
+logger = logging.getLogger(__name__)
 from scheduling.rules import (
     HKT,
     is_business_day,
