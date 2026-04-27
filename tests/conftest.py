@@ -74,8 +74,9 @@ if "db.database" not in sys.modules:
 
 if "db.meetings" not in sys.modules:
     _db_meetings = _make_stub_module("db.meetings")
-    # get_confirmed_meetings_in_range is patched per-test; stub it as a no-op
+    # these are patched per-test; stub as no-ops so imports succeed
     _db_meetings.get_confirmed_meetings_in_range = AsyncMock(return_value=[])  # type: ignore[attr-defined]
+    _db_meetings.update_meeting = AsyncMock()  # type: ignore[attr-defined]
 
 if "db" not in sys.modules:
     _db_pkg = _make_stub_module("db")

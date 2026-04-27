@@ -3,7 +3,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from calendar_integration.calendar_service import get_events
-from db.meetings import get_confirmed_meetings_in_range
+from db.meetings import get_confirmed_meetings_in_range, update_meeting
 
 logger = logging.getLogger(__name__)
 from scheduling.rules import (
@@ -105,15 +105,21 @@ async def check_slot(
             "conflict": True,
         }
 
+    cal_uids = {e.uid for e in cal_events}
     event_intervals: list[tuple[datetime, datetime]] = [(e.start, e.end) for e in cal_events]
 
-    # Merge DB-confirmed meetings for the whole day (not just the proposed slot window)
-    # so the daily cap sees every confirmed meeting, not only those overlapping the proposal.
+    # Merge DB-confirmed meetings for the whole day.
+    # Skip any whose Google Calendar event was manually deleted — and auto-cancel them.
     db_meetings = await get_confirmed_meetings_in_range(
         day_start.astimezone(timezone.utc).isoformat(),
         day_end.astimezone(timezone.utc).isoformat(),
     )
     for m in db_meetings:
+        cal_uid = m.get("calendar_uid")
+        if cal_uid and cal_uid not in cal_uids:
+            logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
+            await update_meeting(m["id"], status="cancelled")
+            continue
         ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
         me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
         if (ms, me) not in event_intervals:
@@ -184,12 +190,18 @@ async def find_next_available_slots(
         if cal is None:
             logger.warning("Calendar read failed for %s — skipping day in slot search", d)
             return None
+        cal_uids = {e.uid for e in cal}
         intervals = [(e.start, e.end) for e in cal]
         db_mtgs = await get_confirmed_meetings_in_range(
             ds.astimezone(timezone.utc).isoformat(),
             de.astimezone(timezone.utc).isoformat(),
         )
         for m in db_mtgs:
+            cal_uid = m.get("calendar_uid")
+            if cal_uid and cal_uid not in cal_uids:
+                logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
+                await update_meeting(m["id"], status="cancelled")
+                continue
             ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
             me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
             if (ms, me) not in intervals:

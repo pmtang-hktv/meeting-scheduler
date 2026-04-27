@@ -72,14 +72,14 @@ async def test_free_day_returns_slots():
 async def test_proposed_blocked_alternatives_same_day():
     from scheduling.availability import find_next_available_slots
 
-    # Block 10:00–11:00 so the proposed slot is unavailable
+    # Use Apr 28 (tomorrow) so the "c > now + 15min" filter doesn't exclude same-day slots
     blocking_event = _make_event(
-        start=hkt(2026, 4, 27, 10, 0),
-        end=hkt(2026, 4, 27, 11, 0),
+        start=hkt(2026, 4, 28, 10, 0),
+        end=hkt(2026, 4, 28, 11, 0),
     )
     mock_ge = AsyncMock(return_value=[blocking_event])
     mock_db = AsyncMock(return_value=[])
-    proposed = hkt(2026, 4, 27, 10, 0)
+    proposed = hkt(2026, 4, 28, 10, 0)
 
     with patch("scheduling.availability.get_events", mock_ge), \
          patch("scheduling.availability.get_confirmed_meetings_in_range", mock_db):
