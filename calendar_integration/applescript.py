@@ -31,17 +31,17 @@ def run_applescript(script: str, retries: int = 1) -> str:
                 ["osascript", "-e", script],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=5,
             )
             if result.returncode == 0:
                 return result.stdout.strip()
             logger.warning("AppleScript error (attempt %d): %s", attempt + 1, result.stderr.strip())
             if attempt < retries:
-                _time.sleep(1)
+                _time.sleep(0.5)
         except subprocess.TimeoutExpired:
             logger.warning("AppleScript timed out (attempt %d)", attempt + 1)
             if attempt < retries:
-                _time.sleep(1)
+                _time.sleep(0.5)
     return ""
 
 
