@@ -90,32 +90,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ctx["is_vip"] = ctx.get("is_vip", False) or turn.is_vip
     ctx["is_urgent"] = ctx.get("is_urgent", False) or turn.is_urgent
 
-    # If intent is not a schedule request, just reply and stay in GATHERING_INFO
+    # Determine which fields are still missing
+    required = ["organizer_name", "purpose", "duration_mins", "proposed_dt"]
+    if ctx.get("is_external"):
+        required.append("location_area")
+    missing = [f for f in required if not ctx.get(f)]
+
+    # All required fields collected → proceed to availability check.
+    # Do this BEFORE the intent check: Claude occasionally misclassifies intent as "other"
+    # even when it has extracted every field, which would cause a premature reply and no booking.
+    if not missing and turn.intent != "cancel":
+        logger.debug(
+            "All fields collected (intent=%s), proceeding to availability check. ctx=%s",
+            turn.intent, {k: v for k, v in ctx.items() if k != "history_json"},
+        )
+        return await _check_and_proceed(update, context, chat_id, ctx, history)
+
+    # Explicit cancellation
+    if turn.intent == "cancel":
+        await update.message.reply_text(
+            "No problem — feel free to message me whenever you'd like to schedule a meeting.",
+            parse_mode=ParseMode.HTML,
+        )
+        await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+        return ConversationHandler.END
+
+    # Not a scheduling intent and fields still missing — just reply conversationally
     if turn.intent not in ("schedule_request", "reschedule"):
         reply = turn.reply or "How can I help you schedule a meeting?"
         await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
-    # Still missing required fields
-    required = ["organizer_name", "purpose", "duration_mins", "proposed_dt"]
-    if ctx.get("is_external"):
-        required.append("location_area")
-    missing = [f for f in required if not ctx.get(f)]
-
-    if missing:
-        # Safety: only send Claude's reply if it's asking for info, not a premature confirmation
-        if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous"):
-            reply = turn.reply
-        else:
-            field_label = missing[0].replace("_", " ")
-            reply = f"Could you please provide the <b>{field_label}</b>?"
-        await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
-        await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
-        return GATHERING_INFO
-
-    # All fields collected — proceed to availability check (never send Claude's reply here)
-    return await _check_and_proceed(update, context, chat_id, ctx, history)
+    # Scheduling intent but still missing required fields — ask for the next one
+    if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous"):
+        reply = turn.reply
+    else:
+        field_label = missing[0].replace("_", " ")
+        reply = f"Could you please provide the <b>{field_label}</b>?"
+    await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
+    await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
+    return GATHERING_INFO
 
 
 async def _check_and_proceed(
