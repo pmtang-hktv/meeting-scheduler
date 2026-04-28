@@ -228,8 +228,11 @@ async def _check_and_proceed(
 
     # Slot is blocked
     if not result["available"]:
-        if result["requires_owner"]:
-            # VIP/urgent conflict — notify owner
+        # Only escalate to owner when the conflict is owner-overrideable (VIP/urgent).
+        # External/outside-hours/long reasons alone do NOT override a physical conflict —
+        # the owner cannot be in two places at once.
+        owner_overrideable = {"vip_conflict", "urgent_conflict"}
+        if result["requires_owner"] and any(r in owner_overrideable for r in result["reasons"]):
             return await _request_owner_approval(
                 update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"], travel_mins=travel_mins
             )
