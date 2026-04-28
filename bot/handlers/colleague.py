@@ -26,6 +26,7 @@ CHECKING_AVAILABILITY = 2
 SUGGESTING_ALTERNATIVES = 3
 CONFIRMING_WITH_REQUESTER = 4
 AWAITING_OWNER_DECISION = 5
+AWAITING_LOCATION = 6
 
 # Per-chat rate limit: max messages per minute
 _RATE_LIMIT = 10
@@ -58,6 +59,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     state = row["state"] if row else "IDLE"
     ctx: dict = json.loads(row["context_json"]) if row else {}
     history: list[dict] = json.loads(row["history_json"]) if row else []
+
+    # Location reply — requester is responding to a pre-meeting location chase message.
+    if state == "AWAITING_LOCATION":
+        meeting_id = ctx.get("awaiting_location_meeting_id")
+        if meeting_id and text.strip():
+            await meet_db.update_meeting(meeting_id, location_exact=text.strip(), location_confirmed=1)
+            await update.message.reply_text(
+                "Thank you — we've noted the exact location for your meeting."
+            )
+        else:
+            await update.message.reply_text(
+                "Sorry, I couldn't capture that. Please send just the address or venue name."
+            )
+        await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+        return ConversationHandler.END
 
     # Greet returning users and pre-fill their name so the bot doesn't ask again
     known_name = ctx.get("organizer_name")
@@ -205,6 +221,25 @@ async def _check_and_proceed(
         is_urgent=is_urgent,
         travel_mins=travel_mins,
     )
+
+    # Notify requesters whose meetings were auto-cancelled because Simon deleted the
+    # calendar event (e.g. to make room for a VIP meeting).
+    for displaced in result.get("displaced_meetings", []):
+        requester = displaced.get("requester_chat_id")
+        if not requester:
+            continue
+        start_local = datetime.fromisoformat(displaced["start_dt"]).astimezone(HKT).strftime("%A %d %B at %H:%M HKT")
+        owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
+        try:
+            await context.bot.send_message(
+                chat_id=requester,
+                text=(
+                    f"Your meeting on {start_local} has been cancelled as the time slot "
+                    f"is no longer available. Please contact {owner_name} to reschedule."
+                ),
+            )
+        except Exception:
+            logger.exception("Failed to notify displaced requester %s", requester)
 
     # Calendar temporarily unreadable — don't risk a double-booking
     if "calendar_unavailable" in result["reasons"]:

@@ -81,6 +81,7 @@ async def check_slot(
             "requires_owner": True,
             "reasons": ["lunch_block"],
             "conflict": True,
+            "displaced_meetings": [],
         }
 
     # Long meeting
@@ -104,13 +105,15 @@ async def check_slot(
             "requires_owner": False,
             "reasons": ["calendar_unavailable"],
             "conflict": True,
+            "displaced_meetings": [],
         }
 
     cal_uids = {e.uid for e in cal_events}
     event_intervals: list[tuple[datetime, datetime]] = [(e.start, e.end) for e in cal_events]
 
     # Merge DB-confirmed meetings for the whole day.
-    # Skip any whose Google Calendar event was manually deleted — and auto-cancel them.
+    # Collect any whose calendar event was deleted so the caller can notify requesters.
+    displaced: list[dict] = []
     db_meetings = await get_confirmed_meetings_in_range(
         day_start.astimezone(timezone.utc).isoformat(),
         day_end.astimezone(timezone.utc).isoformat(),
@@ -120,6 +123,7 @@ async def check_slot(
         if cal_uid and cal_uid not in cal_uids:
             logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
             await update_meeting(m["id"], status="cancelled")
+            displaced.append(m)
             continue
         ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
         me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
@@ -172,6 +176,7 @@ async def check_slot(
         "available": available,
         "requires_owner": requires_owner,
         "reasons": reasons,
+        "displaced_meetings": displaced,
         "conflict": conflict,
     }
 

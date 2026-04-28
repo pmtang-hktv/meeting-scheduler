@@ -16,6 +16,7 @@ from bot.handlers.colleague import (
     CHECKING_AVAILABILITY,
     SUGGESTING_ALTERNATIVES,
     AWAITING_OWNER_DECISION,
+    AWAITING_LOCATION,
     handle_message,
     handle_slot_choice,
 )
@@ -69,6 +70,9 @@ def build_application(settings: Settings) -> Application:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
             ],
             AWAITING_OWNER_DECISION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
+            ],
+            AWAITING_LOCATION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
             ],
         },

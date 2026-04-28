@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -7,7 +8,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
-from db import follow_ups as fu_db, meetings as meet_db
+from db import conversations as conv_db, follow_ups as fu_db, meetings as meet_db
 
 logger = logging.getLogger(__name__)
 HKT = ZoneInfo("Asia/Hong_Kong")
@@ -80,5 +81,14 @@ async def _location_chase_job(fu_id: int, meeting_id: int) -> None:
             ),
         )
         await fu_db.mark_sent(fu_id)
+        # Put the requester into AWAITING_LOCATION so their next message is captured
+        # as the location reply rather than treated as a new meeting request.
+        row = await conv_db.get_conversation(meeting["requester_chat_id"])
+        ctx = json.loads(row["context_json"]) if row else {}
+        history = json.loads(row["history_json"]) if row else []
+        ctx["awaiting_location_meeting_id"] = meeting_id
+        await conv_db.upsert_conversation(
+            meeting["requester_chat_id"], "AWAITING_LOCATION", ctx, history
+        )
     except Exception:
         logger.exception("Failed to send location chase message")
