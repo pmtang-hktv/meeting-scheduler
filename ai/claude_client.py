@@ -1,9 +1,13 @@
 from __future__ import annotations
+import json
+import logging
+import re
 import anthropic
 from ai.prompts import get_system_prompt
 from ai.tools import TOOLS
 from ai.tool_executor import ToolResults, execute_tool
 
+logger = logging.getLogger(__name__)
 _client: anthropic.AsyncAnthropic | None = None
 
 
@@ -58,3 +62,49 @@ async def run_conversation(
             break
 
     return results
+
+
+async def evaluate_location_reply(
+    purpose: str,
+    meeting_date: str,
+    user_message: str,
+) -> tuple[bool, str | None, str]:
+    """
+    Use Claude to judge whether user_message is a valid venue/address reply to a location
+    chase message. Returns (location_found, extracted_location, reply_to_send).
+
+    If location_found is False the caller should stay in AWAITING_LOCATION and send the
+    follow-up reply so Claude can re-ask in a natural way.
+    """
+    assert _client is not None, "claude_client not configured"
+    prompt = (
+        f"You are helping manage a Telegram scheduling bot. "
+        f"A reminder was sent asking for the exact venue of an upcoming meeting.\n\n"
+        f"Meeting: {purpose}\n"
+        f"Date/time: {meeting_date}\n"
+        f"Person's reply: \"{user_message}\"\n\n"
+        f"Does this reply contain a specific venue or address that can be used as the meeting location? "
+        f"Reply ONLY with a JSON object, no other text:\n"
+        f"{{\"found\": true/false, "
+        f"\"location\": \"<clean venue/address string or null>\", "
+        f"\"reply\": \"<short friendly Telegram message to send back>\"}}\n\n"
+        f"If found=true, the reply should confirm the location was noted.\n"
+        f"If found=false (vague, off-topic, or just TBC/unknown), the reply should politely re-ask for the specific venue."
+    )
+    try:
+        response = await _client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=256,
+        )
+        raw = response.content[0].text.strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            found = bool(data.get("found"))
+            location = data.get("location") or None
+            reply = data.get("reply") or ("Got it, location noted." if found else "Could you share the exact venue or address?")
+            return found, location, reply
+    except Exception:
+        logger.exception("evaluate_location_reply failed")
+    return False, None, "Could you please share the exact venue or address for the meeting?"

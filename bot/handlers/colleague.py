@@ -9,6 +9,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
+from ai.claude_client import evaluate_location_reply
 from ai.intent import process_turn, ConversationTurn
 from bot.keyboards import slot_choice_keyboard
 from calendar_integration.calendar_service import create_event, delete_event
@@ -63,17 +64,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Location reply — requester is responding to a pre-meeting location chase message.
     if state == "AWAITING_LOCATION":
         meeting_id = ctx.get("awaiting_location_meeting_id")
-        if meeting_id and text.strip():
-            await meet_db.update_meeting(meeting_id, location_exact=text.strip(), location_confirmed=1)
-            await update.message.reply_text(
-                "Thank you — we've noted the exact location for your meeting."
+        meeting = await meet_db.get_meeting(meeting_id) if meeting_id else None
+        if meeting:
+            start_local = datetime.fromisoformat(meeting["start_dt"]).astimezone(HKT).strftime("%a %d %b at %H:%M HKT")
+            found, location, reply = await evaluate_location_reply(
+                purpose=meeting.get("purpose", "meeting"),
+                meeting_date=start_local,
+                user_message=text,
             )
         else:
-            await update.message.reply_text(
-                "Sorry, I couldn't capture that. Please send just the address or venue name."
-            )
-        await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
-        return ConversationHandler.END
+            found, location, reply = False, None, "Sorry, I couldn't find the meeting details. Please contact Simon directly."
+        await update.message.reply_text(reply)
+        if found and location and meeting_id:
+            await meet_db.update_meeting(meeting_id, location_exact=location, location_confirmed=1)
+            await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+            return ConversationHandler.END
+        # Location not confirmed yet — stay in AWAITING_LOCATION for the next reply.
+        await conv_db.upsert_conversation(chat_id, "AWAITING_LOCATION", ctx, history)
+        return AWAITING_LOCATION
 
     # Greet returning users and pre-fill their name so the bot doesn't ask again
     known_name = ctx.get("organizer_name")
