@@ -70,16 +70,23 @@ async def test_free_day_returns_slots():
 
 @pytest.mark.asyncio
 async def test_proposed_blocked_alternatives_same_day():
+    from datetime import date
     from scheduling.availability import find_next_available_slots
+    from scheduling.rules import is_business_day
 
-    # Use Apr 28 (tomorrow) so the "c > now + 15min" filter doesn't exclude same-day slots
+    # Use a future business day so the "c > now + 15min" filter never excludes same-day slots.
+    future = datetime.now(HKT) + timedelta(days=2)
+    while not is_business_day(future.date()):
+        future += timedelta(days=1)
+    proposal_day = future.date()
+
+    proposed = datetime(proposal_day.year, proposal_day.month, proposal_day.day, 10, 0, tzinfo=HKT)
     blocking_event = _make_event(
-        start=hkt(2026, 4, 28, 10, 0),
-        end=hkt(2026, 4, 28, 11, 0),
+        start=proposed,
+        end=proposed + timedelta(hours=1),
     )
     mock_ge = AsyncMock(return_value=[blocking_event])
     mock_db = AsyncMock(return_value=[])
-    proposed = hkt(2026, 4, 28, 10, 0)
 
     with patch("scheduling.availability.get_events", mock_ge), \
          patch("scheduling.availability.get_confirmed_meetings_in_range", mock_db):
@@ -89,7 +96,7 @@ async def test_proposed_blocked_alternatives_same_day():
     # Proposed itself must not be returned
     assert proposed not in slots
     # At least one slot should be on the same day
-    same_day = [s for s in slots if s.astimezone(HKT).date() == proposed.astimezone(HKT).date()]
+    same_day = [s for s in slots if s.astimezone(HKT).date() == proposal_day]
     assert len(same_day) > 0
 
 

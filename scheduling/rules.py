@@ -11,7 +11,7 @@ LUNCH_START = time(12, 30)
 LUNCH_END = time(14, 0)
 SCHEDULABLE_START = time(8, 30)
 
-MAX_DAILY_MEETING_MINS = 360  # 6 hours
+
 
 
 def is_business_day(d: date) -> bool:

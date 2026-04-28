@@ -11,27 +11,9 @@ from scheduling.rules import (
     is_business_day,
     is_within_normal_hours,
     overlaps_lunch_block,
-    daily_booked_minutes,
     find_candidate_slots,
-    MAX_DAILY_MEETING_MINS,
     _overlaps_any,
 )
-
-def _merged_duration_mins(intervals: list[tuple[datetime, datetime]]) -> int:
-    """Total occupied minutes after merging overlapping intervals."""
-    if not intervals:
-        return 0
-    sorted_iv = sorted(intervals, key=lambda x: x[0])
-    merged_end = sorted_iv[0][0]
-    total = 0
-    for s, e in sorted_iv:
-        if s >= merged_end:
-            total += int((e - s).total_seconds()) // 60
-            merged_end = e
-        elif e > merged_end:
-            total += int((e - merged_end).total_seconds()) // 60
-            merged_end = e
-    return total
 
 
 OWNER_REQUIRES_APPROVAL_REASONS = {
@@ -150,24 +132,16 @@ async def check_slot(
         elif is_urgent:
             reasons.append("urgent_conflict")
 
-    # Daily cap: use merged intervals so overlapping calendar events are not double-counted.
-    booked = _merged_duration_mins(event_intervals)
-    cap_hit = booked + duration_mins > MAX_DAILY_MEETING_MINS and not (is_vip or is_urgent)
     logger.info(
-        "check_slot %s+%dmin: conflict=%s, booked=%dmin, cap_hit=%s, reasons=%s | "
-        "%d interval(s): %s",
+        "check_slot %s+%dmin: conflict=%s, reasons=%s | %d interval(s): %s",
         start_dt.astimezone(HKT).strftime("%Y-%m-%d %H:%M"),
         duration_mins,
         conflict,
-        booked,
-        cap_hit,
         reasons,
         len(event_intervals),
         [(s.astimezone(HKT).strftime("%H:%M"), e.astimezone(HKT).strftime("%H:%M"))
          for s, e in sorted(event_intervals)],
     )
-    if cap_hit:
-        conflict = True
 
     requires_owner = bool(reasons)
     available = not conflict
