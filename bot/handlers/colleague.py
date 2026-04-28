@@ -226,17 +226,19 @@ async def _check_and_proceed(
             update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"], travel_mins=travel_mins
         )
 
-    # Slot is blocked
+    # Slot is physically blocked — no approval can override a time clash.
     if not result["available"]:
-        # Only escalate to owner when the conflict is owner-overrideable (VIP/urgent).
-        # External/outside-hours/long reasons alone do NOT override a physical conflict —
-        # the owner cannot be in two places at once.
-        owner_overrideable = {"vip_conflict", "urgent_conflict"}
-        if result["requires_owner"] and any(r in owner_overrideable for r in result["reasons"]):
-            return await _request_owner_approval(
-                update, chat_id, ctx, history, start_dt, duration_mins, location_area, result["reasons"], travel_mins=travel_mins
+        if any(r in ("vip_conflict", "urgent_conflict") for r in result["reasons"]):
+            # Physical conflict on a VIP/urgent request — owner cannot conjure free time,
+            # so direct the requester to contact Simon to resolve manually.
+            owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
+            await update.message.reply_text(
+                f"Unfortunately that time slot is not available. As this is a priority request, "
+                f"please contact {owner_name} directly to arrange an alternative time."
             )
-        # Suggest alternatives (clear proposed_dt so the user must pick a new one)
+            await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+            return ConversationHandler.END
+        # All other conflicts (including external meetings): offer alternatives.
         ctx.pop("proposed_dt", None)
         return await _suggest_alternatives(update, chat_id, ctx, history, proposed_dt=start_dt, duration_mins=duration_mins, travel_mins=travel_mins)
 
