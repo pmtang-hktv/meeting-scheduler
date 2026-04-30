@@ -271,18 +271,32 @@ async def _check_and_proceed(
 
     # Slot is physically blocked — no approval can override a time clash.
     if not result["available"]:
-        if any(r in ("vip_conflict", "urgent_conflict") for r in result["reasons"]):
-            # Physical conflict on a VIP/urgent request — owner cannot conjure free time,
-            # so direct the requester to contact Simon to resolve manually.
-            owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
-            await update.message.reply_text(
-                f"Unfortunately that time slot is not available. As this is a priority request, "
-                f"please contact {owner_name} directly to arrange an alternative time."
-            )
-            await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
-            return ConversationHandler.END
-        # All other conflicts (including external meetings): offer alternatives.
         ctx.pop("proposed_dt", None)
+        if any(r in ("vip_conflict", "urgent_conflict") for r in result["reasons"]):
+            # Notify Simon and show alternatives so the VIP can self-serve a nearby slot.
+            alert_type = "vip_conflict" if "vip_conflict" in result["reasons"] else "urgent_conflict"
+            owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
+            await owner_notify.send_owner_alert(
+                organizer_name=ctx["organizer_name"],
+                purpose=ctx["purpose"],
+                start_dt=start_dt.astimezone(timezone.utc).isoformat(),
+                duration_mins=duration_mins,
+                alert_type=alert_type,
+                requester_chat_id=chat_id,
+            )
+            intro = (
+                f"That time slot is not available. I've sent a message to <b>{owner_name}</b> "
+                f"and he will get back to you as soon as possible. "
+                f"In the meantime, here are some other available slots:"
+            )
+            return await _suggest_alternatives(
+                update, chat_id, ctx, history,
+                proposed_dt=start_dt,
+                duration_mins=duration_mins,
+                travel_mins=travel_mins,
+                intro_text=intro,
+            )
+        # All other conflicts (including external meetings): offer alternatives.
         return await _suggest_alternatives(update, chat_id, ctx, history, proposed_dt=start_dt, duration_mins=duration_mins, travel_mins=travel_mins)
 
     return GATHERING_INFO
@@ -411,6 +425,7 @@ async def _suggest_alternatives(
     proposed_dt: datetime,
     duration_mins: int,
     travel_mins: int = 0,
+    intro_text: str | None = None,
 ) -> int:
     slots = await find_next_available_slots(proposed_dt, duration_mins, max_results=5, travel_mins=travel_mins)
     if not slots:
@@ -425,7 +440,8 @@ async def _suggest_alternatives(
     ctx["alternative_slots"] = [s.isoformat() for s in slots]
 
     await update.message.reply_text(
-        "That time is not available. Here are some alternative slots:",
+        intro_text or "That time is not available. Here are some alternative slots:",
+        parse_mode=ParseMode.HTML,
         reply_markup=slot_choice_keyboard(formatted),
     )
     await conv_db.upsert_conversation(chat_id, "SUGGESTING_ALTERNATIVES", ctx, history)
