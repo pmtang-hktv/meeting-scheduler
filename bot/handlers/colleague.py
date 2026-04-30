@@ -408,7 +408,7 @@ async def _request_owner_approval(
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
-    owner_name = (context_settings().owner_name if context_settings() else None) or "the executive"
+    owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
     await update.message.reply_text(
         f"Your request has been forwarded to {owner_name} for approval. "
         "You will be notified once a decision is made."
