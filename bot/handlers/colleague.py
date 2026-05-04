@@ -452,7 +452,11 @@ async def handle_slot_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     if not query or not update.effective_chat:
         return ConversationHandler.END
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        # Callback query expired (bot restarted after the button was sent) — ignore silently.
+        return ConversationHandler.END
     chat_id = update.effective_chat.id
 
     data = query.data or ""
