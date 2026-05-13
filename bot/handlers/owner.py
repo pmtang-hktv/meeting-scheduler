@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -61,28 +62,49 @@ async def _approve_meeting(query, confirmation: dict, meeting: dict) -> None:
     from bot.handlers.colleague import _event_title, _event_location
     event_title = _event_title(meeting.get("purpose") or "Meeting", meeting.get("organizer_name") or "")
     event_location = _event_location(bool(meeting.get("is_external")), meeting.get("location_area"))
-    uid = await create_event(
-        title=event_title,
-        start_dt=start_dt,
-        end_dt=end_dt,
-        location=event_location,
-        notes=meeting.get("purpose") or "",
-    )
+    # Retry up to 3 times on transient network errors.
+    uid = None
+    for attempt in range(3):
+        uid = await create_event(
+            title=event_title,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            location=event_location,
+            notes=meeting.get("purpose") or "",
+        )
+        if uid:
+            break
+        if attempt < 2:
+            await asyncio.sleep(2 ** attempt)
+
     await meet_db.update_meeting(
         meeting["id"],
         calendar_uid=uid or None,
-        status="confirmed",
+        status="confirmed" if uid else "pending",
     )
     await pend_db.resolve_confirmation(confirmation["id"], "approved")
 
     local_start = start_dt.strftime("%a %d %b %Y at %H:%M HKT")
-    await query.edit_message_text(f"Approved. Event created for {local_start}.")
+    if uid:
+        await query.edit_message_text(f"Approved. Event created for {local_start}.")
+    else:
+        await query.edit_message_text(
+            f"Approved for {local_start}, but the calendar event could not be created. "
+            f"Please add it manually."
+        )
 
     if _bot:
-        msg = (
-            f"Great news! Your meeting request has been approved.\n"
-            f"Confirmed for {local_start} ({meeting['duration_mins']} min)."
-        )
+        if uid:
+            msg = (
+                f"Great news! Your meeting request has been approved.\n"
+                f"Confirmed for {local_start} ({meeting['duration_mins']} min)."
+            )
+        else:
+            msg = (
+                f"Your meeting request for {local_start} has been approved, "
+                f"but there was a technical issue creating the calendar event. "
+                f"Simon will add it manually shortly."
+            )
         if meeting.get("is_external"):
             msg += "\nWe'll follow up to confirm the exact location closer to the time."
         try:
