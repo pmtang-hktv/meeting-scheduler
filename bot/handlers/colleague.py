@@ -540,25 +540,6 @@ def _event_location(is_external: bool, location_area: str | None) -> str:
     return location_area or "TBC"
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Send the welcome greeting and reset any in-progress conversation."""
-    if not update.message or not update.effective_chat:
-        return ConversationHandler.END
-    chat_id = update.effective_chat.id
-    owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
-    greeting = (
-        f"Hi! I'm <b>{owner_name}</b>'s meeting scheduler. "
-        f"Tell me what meeting you'd like to book — include the purpose, your name, "
-        f"the date/time, and duration.\n\n"
-        f"Tip: send /check to see {owner_name}'s available time slots over the next 7 business days."
-    )
-    await update.message.reply_text(greeting, parse_mode=ParseMode.HTML)
-    row = await conv_db.get_conversation(chat_id)
-    name = json.loads(row["context_json"]).get("organizer_name") if row else None
-    await conv_db.reset_conversation(chat_id, known_name=name)
-    return ConversationHandler.END
-
-
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """List free time blocks for the next 7 business days."""
     if not update.message:
