@@ -86,7 +86,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Greet returning users and pre-fill their name so the bot doesn't ask again
     known_name = ctx.get("organizer_name")
-    show_check_tip = not ctx.get("check_tip_shown")
+    # Show /check tip if it hasn't been shown in the last 15 min.
+    last_tip_iso = ctx.get("check_tip_shown_at")
+    show_check_tip = True
+    if last_tip_iso:
+        try:
+            last_tip = datetime.fromisoformat(last_tip_iso)
+            if datetime.now(tz=timezone.utc) - last_tip < timedelta(minutes=15):
+                show_check_tip = False
+        except (TypeError, ValueError):
+            pass
     if known_name and not history:
         history = [
             {"role": "user", "content": f"My name is {known_name}."},
@@ -188,7 +197,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
         if show_check_tip:
             reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
-            ctx["check_tip_shown"] = True
+            ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
         await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
