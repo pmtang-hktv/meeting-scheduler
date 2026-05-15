@@ -86,6 +86,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Greet returning users and pre-fill their name so the bot doesn't ask again
     known_name = ctx.get("organizer_name")
+    is_fresh_conversation = not history  # True before any pre-population
     if known_name and not history:
         history = [
             {"role": "user", "content": f"My name is {known_name}."},
@@ -185,6 +186,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Not a scheduling intent and fields still missing — just reply conversationally
     if turn.intent not in ("schedule_request", "reschedule"):
         reply = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
+        if is_fresh_conversation:
+            reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
         await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
