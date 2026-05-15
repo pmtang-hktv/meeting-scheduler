@@ -11,6 +11,7 @@ from scheduling.rules import (
     is_business_day,
     is_within_normal_hours,
     overlaps_lunch_block,
+    compute_schedulable_windows,
     find_candidate_slots,
     _overlaps_any,
 )
@@ -155,6 +156,76 @@ async def check_slot(
     }
 
 
+async def get_day_intervals(d: date) -> list[tuple[datetime, datetime]] | None:
+    """Return occupied intervals for the day, or None if the calendar is unreadable."""
+    ds = datetime.combine(d, datetime.min.time(), tzinfo=HKT)
+    de = ds + timedelta(days=1)
+    cal = await get_events(ds, de)
+    if cal is None:
+        logger.warning("Calendar read failed for %s", d)
+        return None
+    cal_uids = {e.uid for e in cal}
+    intervals = [(e.start, e.end) for e in cal]
+    db_mtgs = await get_confirmed_meetings_in_range(
+        ds.astimezone(timezone.utc).isoformat(),
+        de.astimezone(timezone.utc).isoformat(),
+    )
+    for m in db_mtgs:
+        cal_uid = m.get("calendar_uid")
+        if cal_uid and cal_uid not in cal_uids:
+            logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
+            await update_meeting(m["id"], status="cancelled")
+            continue
+        ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
+        me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
+        if (ms, me) not in intervals:
+            intervals.append((ms, me))
+        t_mins = m.get("travel_mins") or 0
+        if t_mins > 0:
+            travel_buf_before = (ms - timedelta(minutes=t_mins), ms)
+            if travel_buf_before not in intervals:
+                intervals.append(travel_buf_before)
+            travel_buf_after = (me, me + timedelta(minutes=t_mins))
+            if travel_buf_after not in intervals:
+                intervals.append(travel_buf_after)
+    return intervals
+
+
+async def compute_free_blocks_for_day(d: date) -> list[tuple[datetime, datetime]] | None:
+    """Return contiguous free time blocks within the day's schedulable windows.
+
+    Returns None if the calendar is unreadable. Returns [] if no free time.
+    """
+    intervals = await get_day_intervals(d)
+    if intervals is None:
+        return None
+    windows = compute_schedulable_windows(d)
+    free: list[tuple[datetime, datetime]] = []
+    for ws, we in windows:
+        # Clip & sort intervals that intersect this window
+        clipped = sorted(
+            (max(s, ws), min(e, we))
+            for s, e in intervals
+            if e > ws and s < we
+        )
+        # Merge overlapping clipped intervals
+        merged: list[tuple[datetime, datetime]] = []
+        for s, e in clipped:
+            if merged and s <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+            else:
+                merged.append((s, e))
+        # Subtract merged busy from the window
+        cursor = ws
+        for bs, be in merged:
+            if bs > cursor:
+                free.append((cursor, bs))
+            cursor = max(cursor, be)
+        if cursor < we:
+            free.append((cursor, we))
+    return free
+
+
 async def find_next_available_slots(
     proposed_dt: datetime,
     duration_mins: int,
@@ -175,46 +246,12 @@ async def find_next_available_slots(
     proposed_date = proposed_local.date()
     results: list[datetime] = []
 
-    async def _day_intervals(d: date) -> list[tuple[datetime, datetime]] | None:
-        """Return occupied intervals for the day, or None if the calendar is unreadable."""
-        ds = datetime.combine(d, datetime.min.time(), tzinfo=HKT)
-        de = ds + timedelta(days=1)
-        cal = await get_events(ds, de)
-        if cal is None:
-            logger.warning("Calendar read failed for %s — skipping day in slot search", d)
-            return None
-        cal_uids = {e.uid for e in cal}
-        intervals = [(e.start, e.end) for e in cal]
-        db_mtgs = await get_confirmed_meetings_in_range(
-            ds.astimezone(timezone.utc).isoformat(),
-            de.astimezone(timezone.utc).isoformat(),
-        )
-        for m in db_mtgs:
-            cal_uid = m.get("calendar_uid")
-            if cal_uid and cal_uid not in cal_uids:
-                logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
-                await update_meeting(m["id"], status="cancelled")
-                continue
-            ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
-            me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
-            if (ms, me) not in intervals:
-                intervals.append((ms, me))
-            t_mins = m.get("travel_mins") or 0
-            if t_mins > 0:
-                travel_buf_before = (ms - timedelta(minutes=t_mins), ms)
-                if travel_buf_before not in intervals:
-                    intervals.append(travel_buf_before)
-                travel_buf_after = (me, me + timedelta(minutes=t_mins))
-                if travel_buf_after not in intervals:
-                    intervals.append(travel_buf_after)
-        return intervals
-
     # --- Same day ---
     # Only suggest same-day slots if we can actually read the calendar for that day.
     # An empty intervals list means "no events" — so if AppleScript fails we MUST skip,
     # otherwise every slot in business hours falsely looks free.
     if is_business_day(proposed_date):
-        intervals = await _day_intervals(proposed_date)
+        intervals = await get_day_intervals(proposed_date)
         if intervals is not None:
             candidates = find_candidate_slots(proposed_date, duration_mins, intervals)
             valid = [
@@ -262,7 +299,7 @@ async def find_next_available_slots(
         if not is_business_day(current_date):
             current_date += timedelta(days=1)
             continue
-        intervals = await _day_intervals(current_date)
+        intervals = await get_day_intervals(current_date)
         if intervals is None:
             consecutive_failures += 1
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:

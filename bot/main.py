@@ -4,6 +4,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    CommandHandler,
     ConversationHandler,
     MessageHandler,
     filters,
@@ -17,8 +18,10 @@ from bot.handlers.colleague import (
     SUGGESTING_ALTERNATIVES,
     AWAITING_OWNER_DECISION,
     AWAITING_LOCATION,
+    check_command,
     handle_message,
     handle_slot_choice,
+    start_command,
 )
 from calendar_integration import calendar_service
 from config.settings import Settings
@@ -83,6 +86,9 @@ def build_application(settings: Settings) -> Application:
         allow_reentry=True,
     )
 
+    # Commands take precedence over the ConversationHandler so they work in any state.
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("check", check_command))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(owner_handler.handle_owner_callback, pattern=r"^(approve|reject):"))
     app.add_error_handler(error_handler.error_handler)

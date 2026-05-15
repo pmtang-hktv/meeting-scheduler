@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from telegram import Update
@@ -15,7 +15,8 @@ from bot.keyboards import slot_choice_keyboard
 from calendar_integration.calendar_service import create_event, delete_event
 from db import conversations as conv_db, meetings as meet_db, pending as pend_db, follow_ups as fu_db
 from notifications import owner_notify
-from scheduling.availability import check_slot, find_next_available_slots
+from scheduling.availability import check_slot, compute_free_blocks_for_day, find_next_available_slots
+from scheduling.rules import is_business_day
 from scheduling.travel import get_travel_minutes
 
 logger = logging.getLogger(__name__)
@@ -537,6 +538,65 @@ def _event_location(is_external: bool, location_area: str | None) -> str:
     if not is_external:
         return "Office"
     return location_area or "TBC"
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Send the welcome greeting and reset any in-progress conversation."""
+    if not update.message or not update.effective_chat:
+        return ConversationHandler.END
+    chat_id = update.effective_chat.id
+    owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
+    greeting = (
+        f"Hi! I'm <b>{owner_name}</b>'s meeting scheduler. "
+        f"Tell me what meeting you'd like to book — include the purpose, your name, "
+        f"the date/time, and duration.\n\n"
+        f"Tip: send /check to see {owner_name}'s available time slots over the next 7 business days."
+    )
+    await update.message.reply_text(greeting, parse_mode=ParseMode.HTML)
+    row = await conv_db.get_conversation(chat_id)
+    name = json.loads(row["context_json"]).get("organizer_name") if row else None
+    await conv_db.reset_conversation(chat_id, known_name=name)
+    return ConversationHandler.END
+
+
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """List free time blocks for the next 7 business days."""
+    if not update.message:
+        return ConversationHandler.END
+
+    today = datetime.now(tz=HKT).date()
+    lines: list[str] = []
+    found = 0
+    d = today
+    # Walk forward through calendar days until we've reported 7 business days.
+    for _ in range(30):
+        if found >= 7:
+            break
+        if not is_business_day(d):
+            d += timedelta(days=1)
+            continue
+        blocks = await compute_free_blocks_for_day(d)
+        label = d.strftime("%a %d %b")
+        if blocks is None:
+            lines.append(f"<b>{label}</b>: (calendar unavailable)")
+        elif not blocks:
+            lines.append(f"<b>{label}</b>: no available time slot")
+        else:
+            spans = ", ".join(
+                f"{s.astimezone(HKT).strftime('%H:%M')}–{e.astimezone(HKT).strftime('%H:%M')}"
+                for s, e in blocks
+            )
+            lines.append(f"<b>{label}</b>: {spans}")
+        found += 1
+        d += timedelta(days=1)
+
+    body = "\n".join(lines) if lines else "No business days found in the next 30 days."
+    owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
+    await update.message.reply_text(
+        f"{owner_name}'s available time slots over the next 7 business days:\n\n{body}",
+        parse_mode=ParseMode.HTML,
+    )
+    return ConversationHandler.END
 
 
 # Module-level settings accessor (injected at startup)
