@@ -96,7 +96,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 show_check_tip = False
         except (TypeError, ValueError):
             pass
-    if known_name and not history:
+    # Track before synthetic injection so we know to show the welcome message in the reply
+    _is_fresh_returning = bool(known_name and not history)
+    if _is_fresh_returning:
         history = [
             {"role": "user", "content": f"My name is {known_name}."},
             {"role": "assistant", "content": f"Welcome back, {known_name}! How can I help you today?"},
@@ -194,7 +196,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Not a scheduling intent and fields still missing — just reply conversationally
     if turn.intent not in ("schedule_request", "reschedule"):
-        reply = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
+        base = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
+        reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
         if show_check_tip:
             reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
             ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
@@ -204,10 +207,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Scheduling intent but still missing required fields — ask for the next one
     if turn.reply and turn.reply_type in ("ask_missing_info", "clarify_ambiguous"):
-        reply = _md_to_html(turn.reply)
+        base = _md_to_html(turn.reply)
     else:
         field_label = missing[0].replace("_", " ")
-        reply = f"Could you please provide the <b>{field_label}</b>?"
+        base = f"Could you please provide the <b>{field_label}</b>?"
+    reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
     if show_check_tip:
         reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
         ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
