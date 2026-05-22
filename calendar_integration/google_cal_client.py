@@ -12,13 +12,30 @@ _service = None
 def authenticate(
     creds_path: str = "credentials.json",
     token_path: str = "data/google_token.json",
+    service_account_path: str = "service_account.json",
 ) -> None:
-    """Run OAuth flow if needed and build the API service. Call once at startup."""
+    """Authenticate with Google Calendar API.
+
+    Prefers service_account.json (permanent, no browser) if it exists.
+    Falls back to OAuth flow (requires browser on first run).
+    """
     global _service
+    from googleapiclient.discovery import build
+
+    sa_file = Path(service_account_path)
+    if sa_file.exists():
+        from google.oauth2 import service_account as sa_module
+        creds = sa_module.Credentials.from_service_account_file(
+            str(sa_file), scopes=_SCOPES
+        )
+        _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        logger.info("Google Calendar authenticated via service account (%s)", sa_file)
+        return
+
+    # Fall back to OAuth flow (user credentials)
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
 
     creds_file = Path(creds_path)
     token_file = Path(token_path)
@@ -29,8 +46,12 @@ def authenticate(
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                logger.warning("Token refresh failed (%s) — re-authenticating via browser", e)
+                creds = None
+        if not creds or not creds.valid:
             if not creds_file.exists():
                 raise FileNotFoundError(
                     f"\n\nMissing {creds_path}.\n"
@@ -43,10 +64,10 @@ def authenticate(
             creds = flow.run_local_server(port=0)
         token_file.parent.mkdir(parents=True, exist_ok=True)
         token_file.write_text(creds.to_json())
-        logger.info("Google Calendar credentials saved to %s", token_file)
+        logger.info("Google Calendar OAuth credentials saved to %s", token_file)
 
     _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    logger.info("Google Calendar API authenticated successfully")
+    logger.info("Google Calendar API authenticated via OAuth")
 
 
 def get_service():

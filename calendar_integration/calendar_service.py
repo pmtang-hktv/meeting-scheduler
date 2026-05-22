@@ -57,12 +57,12 @@ async def _get_all_calendar_ids() -> list[str]:
         for cal in cals:
             logger.info("Calendar available: %s (id=%s, role=%s)",
                         cal.get("summary"), cal.get("id"), cal.get("accessRole"))
-        # Only use calendars the authenticated user OWNS — shared/team calendars
-        # (role=writer) contain other people's events and should not block the
-        # executive's availability.
-        owner_cals = [c for c in cals if c.get("accessRole") == "owner"]
-        if owner_cals:
-            _all_calendar_ids = [c["id"] for c in owner_cals]
+        # Use calendars the account owns OR has writer access to.
+        # Service accounts see shared calendars as "writer" (not "owner"), so
+        # we accept both roles to support both OAuth and service account auth.
+        accessible_cals = [c for c in cals if c.get("accessRole") in ("owner", "writer")]
+        if accessible_cals:
+            _all_calendar_ids = [c["id"] for c in accessible_cals]
         else:
             _all_calendar_ids = [await _get_write_calendar_id()]
     else:
