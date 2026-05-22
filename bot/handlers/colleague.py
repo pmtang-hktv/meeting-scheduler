@@ -565,7 +565,8 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if not update.message:
         return ConversationHandler.END
 
-    today = datetime.now(tz=HKT).date()
+    now = datetime.now(tz=HKT)
+    today = now.date()
     lines: list[str] = []
     found = 0
     d = today
@@ -580,14 +581,18 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         label = d.strftime("%a %d %b")
         if blocks is None:
             lines.append(f"<b>{label}</b>: (calendar unavailable)")
-        elif not blocks:
-            lines.append(f"<b>{label}</b>: no available time slot")
         else:
-            spans = ", ".join(
-                f"{s.astimezone(HKT).strftime('%H:%M')}–{e.astimezone(HKT).strftime('%H:%M')}"
-                for s, e in blocks
-            )
-            lines.append(f"<b>{label}</b>: {spans}")
+            # For today, drop blocks that have already started or passed.
+            if d == today:
+                blocks = [(s, e) for s, e in blocks if s > now]
+            if not blocks:
+                lines.append(f"<b>{label}</b>: no available time slot")
+            else:
+                spans = ", ".join(
+                    f"{s.astimezone(HKT).strftime('%H:%M')}–{e.astimezone(HKT).strftime('%H:%M')}"
+                    for s, e in blocks
+                )
+                lines.append(f"<b>{label}</b>: {spans}")
         found += 1
         d += timedelta(days=1)
 
