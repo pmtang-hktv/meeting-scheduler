@@ -208,6 +208,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         field_label = missing[0].replace("_", " ")
         reply = f"Could you please provide the <b>{field_label}</b>?"
+    if show_check_tip:
+        reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
+        ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
     await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
     await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
     return GATHERING_INFO
