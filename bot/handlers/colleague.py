@@ -356,20 +356,29 @@ async def _confirm_meeting(
         location_area=location_area,
         travel_mins=travel_mins,
     )
+    local_start = start_dt.astimezone(HKT).strftime("%A %d %B %Y at %H:%M")
     if uid:
         await meet_db.update_meeting(meeting_id, calendar_uid=uid, status="confirmed")
+        await _schedule_location_followups(meeting_id, start_dt, ctx.get("is_external", False))
+        msg = (
+            f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
+            f" We will follow up if exact location details are needed."
+            if ctx.get("is_external")
+            else f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
+        )
     else:
-        await meet_db.update_meeting(meeting_id, status="confirmed")
-
-    await _schedule_location_followups(meeting_id, start_dt, ctx.get("is_external", False))
-
-    local_start = start_dt.astimezone(HKT).strftime("%A %d %B %Y at %H:%M")
-    await update.message.reply_text(
-        f"Your meeting has been confirmed for {local_start} HKT "
-        f"({duration_mins} min). We will follow up if exact location details are needed."
-        if ctx.get("is_external")
-        else f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
-    )
+        # Calendar write failed — keep meeting pending so Simon can resolve it, and tell the truth.
+        await meet_db.update_meeting(meeting_id, status="pending")
+        logger.error(
+            "Calendar event creation failed for meeting %d (%s, %s) — left as pending",
+            meeting_id, ctx.get("organizer_name"), local_start,
+        )
+        owner_name = (context_settings().owner_name if context_settings() else None) or "Simon"
+        msg = (
+            f"I've recorded your request for {local_start} HKT ({duration_mins} min), "
+            f"but the calendar event could not be created. {owner_name} will follow up shortly."
+        )
+    await update.message.reply_text(msg)
     await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
     return ConversationHandler.END
 

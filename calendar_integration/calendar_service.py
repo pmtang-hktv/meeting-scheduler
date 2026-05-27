@@ -39,6 +39,12 @@ async def _get_write_calendar_id() -> str:
     global _write_calendar_id
     if _write_calendar_id:
         return _write_calendar_id
+    # If CALENDAR_IDS was set, the first one is the write target.
+    # Required for service accounts because the calendar won't appear in calendarList().
+    if _configured_calendar_ids:
+        _write_calendar_id = _configured_calendar_ids[0]
+        logger.info("Write calendar set from CALENDAR_IDS → %s", _write_calendar_id)
+        return _write_calendar_id
     cals = await google_cal_client.api_list_calendars()
     for cal in cals:
         if cal.get("summary") == _calendar_name:
