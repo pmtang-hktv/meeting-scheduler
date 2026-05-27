@@ -14,6 +14,7 @@ HKT = ZoneInfo("Asia/Hong_Kong")
 _calendar_name: str = "HKTV"
 _write_calendar_id: str | None = None
 _all_calendar_ids: list[str] | None = None
+_configured_calendar_ids: list[str] = []   # set from CALENDAR_IDS env var
 
 # Cache calendar reads for 60s — avoids hitting the API multiple times
 # during a single booking flow (check_slot, find_next_available_slots, etc.)
@@ -22,11 +23,12 @@ _events_cache: dict[tuple[str, str], tuple[float, list["CalendarEvent"]]] = {}
 _cache_lock = asyncio.Lock()
 
 
-def configure(calendar_name: str) -> None:
-    global _calendar_name, _write_calendar_id, _all_calendar_ids
+def configure(calendar_name: str, calendar_ids: list[str] | None = None) -> None:
+    global _calendar_name, _write_calendar_id, _all_calendar_ids, _configured_calendar_ids
     _calendar_name = calendar_name
     _write_calendar_id = None
     _all_calendar_ids = None
+    _configured_calendar_ids = list(calendar_ids) if calendar_ids else []
 
 
 def _invalidate_events_cache() -> None:
@@ -52,6 +54,13 @@ async def _get_all_calendar_ids() -> list[str]:
     global _all_calendar_ids
     if _all_calendar_ids is not None:
         return _all_calendar_ids
+    # If CALENDAR_IDS was set in .env, use those directly — required for service accounts
+    # because shared calendars don't auto-appear in the service account's calendar list.
+    if _configured_calendar_ids:
+        _all_calendar_ids = list(_configured_calendar_ids)
+        logger.info("Using configured calendar IDs: %s", _all_calendar_ids)
+        return _all_calendar_ids
+    # Auto-discover via calendarList (works for OAuth; unreliable for service accounts).
     cals = await google_cal_client.api_list_calendars()
     if cals:
         for cal in cals:
@@ -67,7 +76,7 @@ async def _get_all_calendar_ids() -> list[str]:
             _all_calendar_ids = [await _get_write_calendar_id()]
     else:
         _all_calendar_ids = [await _get_write_calendar_id()]
-    logger.info("Monitoring %d owned calendar(s) for conflicts: %s",
+    logger.info("Monitoring %d calendar(s) for conflicts: %s",
                 len(_all_calendar_ids), _all_calendar_ids)
     return _all_calendar_ids
 

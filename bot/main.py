@@ -49,7 +49,7 @@ def build_application(settings: Settings) -> Application:
 
     # Configure sub-modules
     claude_client.configure(settings.anthropic_api_key)
-    calendar_service.configure(settings.default_calendar_name)
+    calendar_service.configure(settings.default_calendar_name, calendar_ids=settings.calendar_ids)
     owner_notify.configure(app.bot, settings.owner_telegram_id)
     owner_handler.configure(app.bot, settings)
     colleague.set_settings(settings)

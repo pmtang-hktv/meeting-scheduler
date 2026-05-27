@@ -14,10 +14,15 @@ class Settings:
     db_path: str
     office_address: str
     owner_name: str
+    # Optional: comma-separated Google Calendar IDs to monitor for conflicts.
+    # Required when using a service account (auto-discovery doesn't work for service accounts).
+    calendar_ids: list[str]
 
 
 def load_settings() -> Settings:
     load_dotenv()
+    raw_ids = os.getenv("CALENDAR_IDS", "")
+    calendar_ids = [i.strip() for i in raw_ids.split(",") if i.strip()]
     return Settings(
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         owner_telegram_id=int(_require("OWNER_TELEGRAM_ID")),
@@ -27,6 +32,7 @@ def load_settings() -> Settings:
         db_path=os.getenv("DB_PATH", "data/bot.db"),
         office_address=os.getenv("OFFICE_ADDRESS", "1 Chun Cheong Street, Tseung Kwan O, Hong Kong"),
         owner_name=os.getenv("OWNER_NAME", "Simon"),
+        calendar_ids=calendar_ids,
     )
 
 
