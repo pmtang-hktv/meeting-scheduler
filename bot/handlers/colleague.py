@@ -194,10 +194,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await conv_db.upsert_conversation(chat_id, "SUGGESTING_ALTERNATIVES", ctx, history)
         return SUGGESTING_ALTERNATIVES
 
-    # Not a scheduling intent and fields still missing — just reply conversationally
+    # Not a scheduling intent and fields still missing — just reply conversationally.
+    # For a fresh returning user with no fields yet, proactively prompt for everything
+    # we need (saves a round-trip vs. asking field-by-field).
     if turn.intent not in ("schedule_request", "reschedule"):
-        base = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
-        reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
+        if _is_fresh_returning and not any(ctx.get(f) and f != "organizer_name" for f in ("purpose", "duration_mins", "proposed_dt")):
+            reply = (
+                f"Welcome back, <b>{known_name}</b>! To book a meeting with Simon, please tell me:\n\n"
+                f"1. <b>What is the meeting about?</b> (the purpose)\n"
+                f"2. <b>When</b> would you like to meet? (date and time)\n"
+                f"3. <b>How long</b> will it take? (duration in minutes)\n"
+                f"4. Are you <b>internal</b> (HKTV colleague) or <b>external</b>? (if external, which area/district?)"
+            )
+        else:
+            base = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
+            reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
         if show_check_tip:
             reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
             ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
