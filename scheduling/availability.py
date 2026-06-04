@@ -313,6 +313,8 @@ async def find_next_available_slots(
         consecutive_failures = 0
         candidates = find_candidate_slots(current_date, duration_mins, intervals)
         for c in candidates:
+            if c <= now + timedelta(minutes=15):
+                continue
             if overlaps_lunch_block(c, c + timedelta(minutes=duration_mins)):
                 continue
             if travel_mins > 0 and _overlaps_any(

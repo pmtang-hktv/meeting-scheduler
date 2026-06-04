@@ -239,6 +239,16 @@ async def _check_and_proceed(
     history: list[dict],
 ) -> int:
     start_dt = datetime.fromisoformat(ctx["proposed_dt"])
+
+    # Reject dates that have already passed — Claude sometimes resolves relative
+    # dates incorrectly when conversation history contains old dates.
+    if start_dt < datetime.now(tz=HKT) - timedelta(hours=1):
+        ctx.pop("proposed_dt", None)
+        await update.message.reply_text(
+            "That date has already passed. Could you please provide a future date and time?"
+        )
+        await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
+        return GATHERING_INFO
     duration_mins = ctx["duration_mins"]
     is_external = ctx.get("is_external", False)
     is_vip = ctx.get("is_vip", False)
