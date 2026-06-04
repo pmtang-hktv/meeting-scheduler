@@ -22,6 +22,12 @@ from scheduling.travel import get_travel_minutes
 logger = logging.getLogger(__name__)
 HKT = ZoneInfo("Asia/Hong_Kong")
 
+_TIPS = (
+    "\n\n<b>Tips:</b>"
+    "\n• Use /check to see Simon's available time slots over the next 7 business days."
+    "\n• Mention <b>urgent</b> in your message if time-sensitive — Simon will be notified to approve even if the slot is taken."
+)
+
 # Conversation states
 GATHERING_INFO = 1
 CHECKING_AVAILABILITY = 2
@@ -210,7 +216,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             base = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
             reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
         if show_check_tip:
-            reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
+            reply += _TIPS
             ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
         await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
@@ -224,7 +230,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         base = f"Could you please provide the <b>{field_label}</b>?"
     reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
     if show_check_tip:
-        reply += "\n\nTip: use /check to see Simon's available time slots over the next 7 business days."
+        reply += _TIPS
         ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
     await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
     await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
