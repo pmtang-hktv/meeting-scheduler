@@ -30,9 +30,20 @@ def start_scheduler(db_path: str) -> AsyncIOScheduler:
         "default": SQLAlchemyJobStore(url=f"sqlite:///{db_path}")
     }
     _scheduler = AsyncIOScheduler(jobstores=jobstores, timezone=HKT)
+    _scheduler.add_job(
+        _heartbeat,
+        "interval",
+        hours=4,
+        id="heartbeat",
+        replace_existing=True,
+    )
     _scheduler.start()
     logger.info("APScheduler started")
     return _scheduler
+
+
+def _heartbeat() -> None:
+    logger.info("Bot heartbeat — running normally")
 
 
 async def schedule_location_followup(
