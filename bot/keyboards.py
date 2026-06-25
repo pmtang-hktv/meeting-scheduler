@@ -50,6 +50,13 @@ def edit_fields_keyboard(meeting_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+def cancel_edit_keyboard() -> InlineKeyboardMarkup:
+    """A single escape button shown while waiting for a typed field value."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✖ Cancel editing", callback_data="editcancel")],
+    ])
+
+
 def cancel_confirm_keyboard(meeting_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🗑 Yes, cancel it", callback_data=f"editdelyes:{meeting_id}")],

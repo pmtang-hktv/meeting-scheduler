@@ -22,6 +22,7 @@ from bot.handlers import colleague
 from bot.keyboards import (
     booking_list_keyboard,
     cancel_confirm_keyboard,
+    cancel_edit_keyboard,
     edit_fields_keyboard,
     main_menu_keyboard,
 )
@@ -48,6 +49,21 @@ _FIELD_PROMPTS = {
     "purpose": "What's the meeting now <b>about</b>?",
     "organiser": "Who is the <b>organiser</b> now? (full name)",
 }
+
+# Appended to every prompt/retry shown while waiting for a typed value, so a user
+# who changes their mind (or types something unrelated) always has a way out.
+_ESCAPE_HINT = "\n\n<i>Changed your mind? Tap ✖ Cancel editing below, or type /menu.</i>"
+
+
+async def _retry(update: Update, text_html: str) -> int:
+    """Re-prompt for the current field, keeping an escape hatch visible."""
+    await update.message.reply_text(
+        text_html + _ESCAPE_HINT,
+        parse_mode=ParseMode.HTML,
+        reply_markup=cancel_edit_keyboard(),
+    )
+    # DB state stays EDITING_FIELD, so the next message retries this same field.
+    return ConversationHandler.END
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +175,11 @@ async def _prompt_for_field(query, chat_id: int, ctx: dict, history: list[dict],
     ctx["edit_meeting_id"] = meeting_id
     ctx["edit_field"] = field
     await conv_db.upsert_conversation(chat_id, "EDITING_FIELD", ctx, history)
-    await query.edit_message_text(_FIELD_PROMPTS[field], parse_mode=ParseMode.HTML)
+    await query.edit_message_text(
+        _FIELD_PROMPTS[field] + _ESCAPE_HINT,
+        parse_mode=ParseMode.HTML,
+        reply_markup=cancel_edit_keyboard(),
+    )
 
 
 async def _finish(query, chat_id: int, ctx: dict) -> None:
@@ -232,8 +252,7 @@ async def apply_field_edit(
 async def _apply_metadata_change(update, chat_id, ctx, history, meeting, field, text) -> int:
     value = text.strip()
     if not value:
-        await update.message.reply_text("Please type the new value.")
-        return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
+        return await _retry(update, "Please type the new value.")
 
     cal_uid = meeting.get("calendar_uid")
     if field == "purpose":
@@ -266,12 +285,11 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
     turn = await process_turn([], text)
     if field == "datetime":
         if not turn.proposed_dt:
-            await update.message.reply_text(
+            return await _retry(
+                update,
                 "Sorry, I couldn't understand that date/time. Please try again — "
                 "e.g. <b>Tuesday 3pm</b> or <b>30 Jun 15:00</b>.",
-                parse_mode=ParseMode.HTML,
             )
-            return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
         new_start = turn.proposed_dt
         # If the user's message also implies a new length (e.g. a "12:00-12:30" range),
         # honour it — otherwise we'd re-check the booking's old duration at the new start
@@ -280,17 +298,15 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
             duration = turn.duration_mins
     else:  # duration
         if not turn.duration_mins:
-            await update.message.reply_text(
+            return await _retry(
+                update,
                 "Sorry, I couldn't understand that duration. Please give a number of "
                 "minutes — e.g. <b>45</b> or <b>1 hour</b>.",
-                parse_mode=ParseMode.HTML,
             )
-            return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
         duration = turn.duration_mins
 
     if new_start < datetime.now(tz=HKT) - timedelta(hours=1):
-        await update.message.reply_text("That time has already passed. Please choose a future date and time.")
-        return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
+        return await _retry(update, "That time has already passed. Please choose a future date and time.")
 
     new_end = new_start + timedelta(minutes=duration)
     result = await check_slot(
@@ -302,27 +318,25 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
     )
 
     if "calendar_unavailable" in result["reasons"]:
-        await update.message.reply_text(
-            "I'm having trouble reading the calendar right now. Please try again in a moment."
+        return await _retry(
+            update, "I'm having trouble reading the calendar right now. Please try again in a moment."
         )
-        return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
     if not result["available"]:
         window = f"{new_start.strftime('%a %d %b %H:%M')}–{new_end.strftime('%H:%M')} ({duration} min)"
-        await update.message.reply_text(
+        return await _retry(
+            update,
             f"That time isn't available — {window} clashes with something on Simon's calendar. "
-            "Please suggest a different time."
+            "Please suggest a different time.",
         )
-        return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
 
     cal_uid = meeting.get("calendar_uid")
     if cal_uid:
         ok = await cal_svc.update_event(cal_uid, start_dt=new_start, end_dt=new_end)
         if not ok:
             logger.error("Calendar update failed for meeting %d", meeting["id"])
-            await update.message.reply_text(
-                "Sorry, I couldn't update the calendar event just now. Please try again in a moment."
+            return await _retry(
+                update, "Sorry, I couldn't update the calendar event just now. Please try again in a moment."
             )
-            return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
 
     await meet_db.update_meeting(
         meeting["id"],

@@ -143,3 +143,35 @@ async def test_cancel_rejects_other_users_booking():
 
     delete.assert_not_awaited()
     update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unparseable_value_reprompts_with_escape_button():
+    """A value that can't be parsed must re-prompt with the Cancel-editing button,
+    not silently loop or mutate the booking."""
+    import bot.handlers.edit as edit
+
+    meeting = {
+        "id": 91, "requester_chat_id": 555, "status": "confirmed", "calendar_uid": "UID91",
+        "is_external": 0, "travel_mins": 0, "organizer_name": "Pat", "purpose": "Testing",
+        "start_dt": hkt(2099, 6, 26, 9, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "end_dt": hkt(2099, 6, 26, 10, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "duration_mins": 60,
+    }
+
+    class Turn:
+        proposed_dt = None  # "hi" didn't parse
+        duration_mins = None
+
+    update = AsyncMock()
+    upd_meeting = AsyncMock()
+    with patch.object(edit, "process_turn", AsyncMock(return_value=Turn())), \
+         patch.object(edit.meet_db, "get_meeting", AsyncMock(return_value=meeting)), \
+         patch.object(edit.meet_db, "update_meeting", upd_meeting):
+        ctx = {"edit_meeting_id": 91, "edit_field": "datetime", "organizer_name": "Pat"}
+        await edit.apply_field_edit(update, None, 555, ctx, [], "hi")
+
+    upd_meeting.assert_not_awaited()  # booking untouched
+    # The re-prompt carries an inline keyboard (the escape hatch).
+    _, kwargs = update.message.reply_text.call_args
+    assert kwargs.get("reply_markup") is not None
