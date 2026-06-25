@@ -56,3 +56,40 @@ async def test_check_slot_without_exclusion_sees_the_conflict():
          patch("scheduling.availability.get_confirmed_meetings_in_range", mock_db):
         result = await check_slot(start_dt=start + timedelta(minutes=15), duration_mins=30)
     assert result["available"] is False
+
+
+@pytest.mark.asyncio
+async def test_datetime_edit_adopts_duration_from_a_time_range():
+    """Rescheduling a 60-min booking to a '12:00-12:30' range must re-check 30 min,
+    not the old 60 min — otherwise a valid short slot is wrongly rejected."""
+    import bot.handlers.edit as edit
+
+    meeting = {
+        "id": 91, "requester_chat_id": 555, "status": "confirmed",
+        "calendar_uid": "UID91", "is_external": 0, "travel_mins": 0,
+        "organizer_name": "Pat", "purpose": "Testing",
+        "start_dt": hkt(2099, 6, 26, 9, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "end_dt": hkt(2099, 6, 26, 10, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "duration_mins": 60,
+    }
+
+    class Turn:  # mimics ConversationTurn for the fields we read
+        proposed_dt = hkt(2099, 6, 26, 12, 0)
+        duration_mins = 30
+
+    update = AsyncMock()
+    captured = {}
+
+    async def fake_update_meeting(mid, **fields):
+        captured.update(fields)
+
+    with patch.object(edit, "process_turn", AsyncMock(return_value=Turn())), \
+         patch.object(edit, "check_slot", AsyncMock(return_value={"available": True, "reasons": [], "requires_owner": False})), \
+         patch.object(edit.meet_db, "get_meeting", AsyncMock(return_value=meeting)), \
+         patch.object(edit.meet_db, "update_meeting", fake_update_meeting), \
+         patch.object(edit.cal_svc, "update_event", AsyncMock(return_value=True)), \
+         patch.object(edit.conv_db, "upsert_conversation", AsyncMock()):
+        ctx = {"edit_meeting_id": 91, "edit_field": "datetime", "organizer_name": "Pat"}
+        await edit.apply_field_edit(update, None, 555, ctx, [], "tomorrow 12:00-12:30pm")
+
+    assert captured.get("duration_mins") == 30

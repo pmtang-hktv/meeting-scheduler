@@ -77,9 +77,27 @@ if "db.meetings" not in sys.modules:
     # these are patched per-test; stub as no-ops so imports succeed
     _db_meetings.get_confirmed_meetings_in_range = AsyncMock(return_value=[])  # type: ignore[attr-defined]
     _db_meetings.update_meeting = AsyncMock()  # type: ignore[attr-defined]
+    _db_meetings.get_meeting = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+    _db_meetings.get_upcoming_confirmed_meetings = AsyncMock(return_value=[])  # type: ignore[attr-defined]
+    _db_meetings.booking_ref = lambda mid: f"BK-{mid:04d}"  # type: ignore[attr-defined]
 
 if "db" not in sys.modules:
     _db_pkg = _make_stub_module("db")
+
+# Other db submodules imported by the bot handlers. Stubbed so that importing a
+# handler module (e.g. bot.handlers.edit) doesn't require a real database; the
+# individual calls are patched per-test.
+if "db.conversations" not in sys.modules:
+    _db_conv = _make_stub_module("db.conversations")
+    _db_conv.get_conversation = AsyncMock(return_value=None)    # type: ignore[attr-defined]
+    _db_conv.upsert_conversation = AsyncMock()                  # type: ignore[attr-defined]
+    _db_conv.reset_conversation = AsyncMock()                   # type: ignore[attr-defined]
+
+if "db.pending" not in sys.modules:
+    _make_stub_module("db.pending")
+
+if "db.follow_ups" not in sys.modules:
+    _make_stub_module("db.follow_ups")
 
 # ---------------------------------------------------------------------------
 # google_cal_client stub (avoids needing live credentials at import time)

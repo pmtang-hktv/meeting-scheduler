@@ -222,6 +222,11 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
             )
             return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
         new_start = turn.proposed_dt
+        # If the user's message also implies a new length (e.g. a "12:00-12:30" range),
+        # honour it — otherwise we'd re-check the booking's old duration at the new start
+        # and wrongly reject a slot the user meant to be shorter.
+        if turn.duration_mins:
+            duration = turn.duration_mins
     else:  # duration
         if not turn.duration_mins:
             await update.message.reply_text(
@@ -251,8 +256,9 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
         )
         return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
     if not result["available"]:
+        window = f"{new_start.strftime('%a %d %b %H:%M')}–{new_end.strftime('%H:%M')} ({duration} min)"
         await update.message.reply_text(
-            "That time isn't available — Simon already has something then. "
+            f"That time isn't available — {window} clashes with something on Simon's calendar. "
             "Please suggest a different time."
         )
         return ConversationHandler.END  # DB state stays EDITING_FIELD → next message retries
