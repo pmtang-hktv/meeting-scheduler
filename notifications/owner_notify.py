@@ -69,6 +69,16 @@ async def send_owner_confirmation_request(
         return None
 
 
+async def send_owner_message(text: str) -> None:
+    """Send a plain informational message to the owner (e.g. a day-off heads-up)."""
+    if _bot is None:
+        return
+    try:
+        await _bot.send_message(chat_id=_owner_id, text=text)
+    except Exception:
+        logger.exception("Failed to send owner message")
+
+
 async def send_owner_alert(
     organizer_name: str,
     purpose: str,

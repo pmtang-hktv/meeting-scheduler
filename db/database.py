@@ -1,5 +1,6 @@
 from __future__ import annotations
 import contextlib
+import glob
 import os
 import aiosqlite
 
@@ -24,9 +25,11 @@ async def get_db():
 async def init_db(db_path: str) -> None:
     configure(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    migration_path = os.path.join(os.path.dirname(__file__), "migrations", "001_initial.sql")
-    with open(migration_path) as f:
-        sql = f.read()
+    migrations_dir = os.path.join(os.path.dirname(__file__), "migrations")
+    # Run every migration in filename order. All statements use CREATE ... IF NOT
+    # EXISTS, so re-running on an existing database is a no-op.
     async with get_db() as db:
-        await db.executescript(sql)
+        for path in sorted(glob.glob(os.path.join(migrations_dir, "*.sql"))):
+            with open(path) as f:
+                await db.executescript(f.read())
         await db.commit()

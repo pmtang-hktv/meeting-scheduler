@@ -107,6 +107,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return GATHERING_INFO
 
+    # Day-off flow — the user is replying with a date or their name during a leave
+    # request. Routed here so it isn't mis-parsed as a meeting. See bot/handlers/day_off.py.
+    if state in ("AWAITING_DAYOFF_DATE", "AWAITING_DAYOFF_NAME", "AWAITING_DAYOFF_CONFIRM"):
+        from bot.handlers import day_off as day_off_handler
+        return await day_off_handler.handle_followup(update, chat_id, ctx, history, text, state)
+    if state == "DAYOFF_MENU":
+        await update.message.reply_text(
+            "Please tap one of the buttons above, or type /menu to start over."
+        )
+        return GATHERING_INFO
+
     # Greet returning users and pre-fill their name so the bot doesn't ask again
     known_name = ctx.get("organizer_name")
     # Show /check tip if it hasn't been shown in the last 15 min.
@@ -154,6 +165,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ctx["location_area"] = turn.location_area
     ctx["is_vip"] = ctx.get("is_vip", False) or turn.is_vip
     ctx["is_urgent"] = ctx.get("is_urgent", False) or turn.is_urgent
+
+    # Day-off / leave request — handle before meeting logic so "I'm off Friday" isn't
+    # treated as a booking. See bot/handlers/day_off.py.
+    if turn.intent == "mark_day_off":
+        from bot.handlers import day_off as day_off_handler
+        return await day_off_handler.start_from_intent(update, chat_id, ctx, history, turn)
 
     # Determine which fields are still missing
     required = ["organizer_name", "purpose", "duration_mins", "proposed_dt"]

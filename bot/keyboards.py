@@ -25,6 +25,38 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🆕 New booking", callback_data="menu:new")],
         [InlineKeyboardButton("✏️ Change a booking", callback_data="menu:change")],
+        [InlineKeyboardButton("🌴 Mark a day off", callback_data="menu:dayoff")],
+    ])
+
+
+def dayoff_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm day off", callback_data="dayoff:yes")],
+        [InlineKeyboardButton("✖ Cancel", callback_data="dayoff:no")],
+    ])
+
+
+def cancel_dayoff_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✖ Cancel", callback_data="dayoff:no")],
+    ])
+
+
+def dayoff_list_keyboard(items: list) -> InlineKeyboardMarkup:
+    """Each (day_off, label) becomes a 🗑 remove button; plus add/cancel rows."""
+    buttons = [
+        [InlineKeyboardButton(f"🗑 {label}", callback_data=f"dayoffdel:{d['id']}")]
+        for d, label in items
+    ]
+    buttons.append([InlineKeyboardButton("➕ Add a day off", callback_data="dayoff:add")])
+    buttons.append([InlineKeyboardButton("Done", callback_data="dayoff:no")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def dayoff_del_confirm_keyboard(day_off_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑 Yes, remove it", callback_data=f"dayoffdelyes:{day_off_id}")],
+        [InlineKeyboardButton("← No, keep it", callback_data="menu:dayoff")],
     ])
 
 

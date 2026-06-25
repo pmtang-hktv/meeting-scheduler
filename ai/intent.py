@@ -25,6 +25,9 @@ class ConversationTurn:
     missing_fields: list[str]
     reply: str | None
     reply_type: str | None
+    day_off_start: str | None = None
+    day_off_end: str | None = None
+    day_off_person: str | None = None
 
 
 def _parse_dt(dt_str: str) -> datetime | None:
@@ -76,4 +79,7 @@ async def process_turn(history: list[dict], new_message: str) -> ConversationTur
         missing_fields=results.missing_fields,
         reply=reply,
         reply_type=reply_type,
+        day_off_start=results.day_off_start,
+        day_off_end=results.day_off_end,
+        day_off_person=results.day_off_person,
     )

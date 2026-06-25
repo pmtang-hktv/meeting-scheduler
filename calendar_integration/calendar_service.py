@@ -185,6 +185,29 @@ async def create_event(
     return uid
 
 
+async def create_all_day_event(
+    title: str,
+    start_date: str,
+    end_date: str,
+    notes: str = "",
+) -> str:
+    """Create an all-day event. start_date is inclusive, end_date is EXCLUSIVE
+    (Google's all-day convention), both as 'YYYY-MM-DD'. Marked transparent so it
+    is informational and never counts as a busy block."""
+    cal_id = await _get_write_calendar_id()
+    body = {
+        "summary": title,
+        "description": notes,
+        "start": {"date": start_date},
+        "end": {"date": end_date},
+        "transparency": "transparent",
+    }
+    uid = await google_cal_client.api_create_event(cal_id, body)
+    if uid:
+        _invalidate_events_cache()
+    return uid
+
+
 async def update_event(
     uid: str,
     *,

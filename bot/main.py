@@ -11,7 +11,13 @@ from telegram.ext import (
 )
 
 from ai import claude_client
-from bot.handlers import colleague, edit as edit_handler, error as error_handler, owner as owner_handler
+from bot.handlers import (
+    colleague,
+    day_off as day_off_handler,
+    edit as edit_handler,
+    error as error_handler,
+    owner as owner_handler,
+)
 from bot.handlers.colleague import (
     GATHERING_INFO,
     CHECKING_AVAILABILITY,
@@ -95,6 +101,10 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CallbackQueryHandler(
         edit_handler.handle_edit_callback,
         pattern=r"^(menu:new|menu:change|editcancel|editpick:|editfield:|editdelete:|editdelyes:)",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        day_off_handler.handle_dayoff_callback,
+        pattern=r"^(menu:dayoff|dayoff:(yes|no|add)|dayoffdel:|dayoffdelyes:)",
     ))
     app.add_handler(CallbackQueryHandler(owner_handler.handle_owner_callback, pattern=r"^(approve|reject):"))
     app.add_error_handler(error_handler.error_handler)

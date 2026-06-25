@@ -22,6 +22,9 @@ class ToolResults:
         self.missing_field_asked: str | None = None
         self.reply: str | None = None
         self.reply_type: str | None = None
+        self.day_off_start: str | None = None
+        self.day_off_end: str | None = None
+        self.day_off_person: str | None = None
 
 
 def execute_tool(name: str, inputs: dict[str, Any], results: ToolResults) -> str:
@@ -44,6 +47,15 @@ def execute_tool(name: str, inputs: dict[str, Any], results: ToolResults) -> str
             results.location_area = inputs["location_area"]
         results.missing_fields = inputs.get("missing_fields", [])
         return "Details extracted"
+
+    if name == "extract_day_off":
+        if inputs.get("start_date"):
+            results.day_off_start = inputs["start_date"]
+        if inputs.get("end_date"):
+            results.day_off_end = inputs["end_date"]
+        if inputs.get("person_name"):
+            results.day_off_person = inputs["person_name"]
+        return "Day off extracted"
 
     if name == "detect_vip":
         results.is_vip = inputs.get("is_vip", False)

@@ -99,6 +99,15 @@ if "db.pending" not in sys.modules:
 if "db.follow_ups" not in sys.modules:
     _make_stub_module("db.follow_ups")
 
+if "db.day_offs" not in sys.modules:
+    _db_dayoffs = _make_stub_module("db.day_offs")
+    _db_dayoffs.create_day_off = AsyncMock(return_value=1)       # type: ignore[attr-defined]
+    _db_dayoffs.set_calendar_uid = AsyncMock()                   # type: ignore[attr-defined]
+    _db_dayoffs.get_day_off = AsyncMock(return_value=None)       # type: ignore[attr-defined]
+    _db_dayoffs.get_upcoming_day_offs = AsyncMock(return_value=[])  # type: ignore[attr-defined]
+    _db_dayoffs.cancel_day_off = AsyncMock()                     # type: ignore[attr-defined]
+    _db_dayoffs.day_off_ref = lambda i: f"OFF-{i:04d}"           # type: ignore[attr-defined]
+
 # ---------------------------------------------------------------------------
 # google_cal_client stub (avoids needing live credentials at import time)
 # ---------------------------------------------------------------------------

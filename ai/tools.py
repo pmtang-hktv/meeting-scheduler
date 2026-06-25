@@ -7,8 +7,8 @@ TOOLS = [
             "properties": {
                 "intent": {
                     "type": "string",
-                    "enum": ["schedule_request", "check_availability", "cancel", "reschedule", "other"],
-                    "description": "The detected intent.",
+                    "enum": ["schedule_request", "check_availability", "cancel", "reschedule", "mark_day_off", "other"],
+                    "description": "The detected intent. Use mark_day_off when the user says they are taking leave / a day off / will be away or on holiday.",
                 },
                 "confidence": {
                     "type": "string",
@@ -55,6 +55,32 @@ TOOLS = [
                 },
             },
             "required": ["is_external", "missing_fields"],
+        },
+    },
+    {
+        "name": "extract_day_off",
+        "description": (
+            "Extract the date or date range for a day-off / leave request "
+            "(use when intent is mark_day_off). Resolve relative dates to the nearest "
+            "future occurrence, never a past year."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {
+                    "type": ["string", "null"],
+                    "description": "First day off as an ISO date YYYY-MM-DD. Null if not stated yet.",
+                },
+                "end_date": {
+                    "type": ["string", "null"],
+                    "description": "Last day off (inclusive) as YYYY-MM-DD. Null for a single day.",
+                },
+                "person_name": {
+                    "type": ["string", "null"],
+                    "description": "Name of the person taking leave, if stated.",
+                },
+            },
+            "required": [],
         },
     },
     {
