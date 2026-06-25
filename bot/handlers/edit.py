@@ -19,7 +19,12 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ai.intent import process_turn
 from bot.handlers import colleague
-from bot.keyboards import booking_list_keyboard, edit_fields_keyboard, main_menu_keyboard
+from bot.keyboards import (
+    booking_list_keyboard,
+    cancel_confirm_keyboard,
+    edit_fields_keyboard,
+    main_menu_keyboard,
+)
 from calendar_integration import calendar_service as cal_svc
 from db import conversations as conv_db, meetings as meet_db
 from scheduling.availability import check_slot
@@ -51,8 +56,14 @@ _FIELD_PROMPTS = {
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show the two-button menu (New booking / Change a booking)."""
-    if not update.message:
+    if not update.message or not update.effective_chat:
         return ConversationHandler.END
+    chat_id = update.effective_chat.id
+    # Clear any half-finished flow (e.g. a pending edit awaiting a typed value) so the
+    # next message isn't captured as a field value instead of a fresh request.
+    row = await conv_db.get_conversation(chat_id)
+    name = json.loads(row["context_json"]).get("organizer_name") if row else None
+    await conv_db.reset_conversation(chat_id, known_name=name)
     await update.message.reply_text(
         "What would you like to do?",
         reply_markup=main_menu_keyboard(),
@@ -91,6 +102,10 @@ async def handle_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data.startswith("editfield:"):
         _, mid, field = data.split(":", 2)
         await _prompt_for_field(query, chat_id, ctx, history, int(mid), field)
+    elif data.startswith("editdelete:"):
+        await _confirm_cancel(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
+    elif data.startswith("editdelyes:"):
+        await _do_cancel(query, chat_id, ctx, int(data.split(":", 1)[1]))
 
 
 async def _start_new_booking(query, chat_id: int, ctx: dict) -> None:
@@ -149,6 +164,42 @@ async def _prompt_for_field(query, chat_id: int, ctx: dict, history: list[dict],
 
 async def _finish(query, chat_id: int, ctx: dict) -> None:
     await query.edit_message_text("All done. Type /menu anytime to make or change a booking.")
+    await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+
+
+async def _confirm_cancel(query, chat_id: int, ctx: dict, history: list[dict], meeting_id: int) -> None:
+    meeting = await meet_db.get_meeting(meeting_id)
+    if not _owns(meeting, chat_id):
+        await query.edit_message_text("Sorry, I can't find that booking any more.")
+        await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+        return
+    start = datetime.fromisoformat(meeting["start_dt"]).astimezone(HKT)
+    ref = meet_db.booking_ref(meeting_id)
+    await conv_db.upsert_conversation(chat_id, "EDIT_MENU", ctx, history)
+    await query.edit_message_text(
+        f"Cancel booking <b>{ref}</b> on {start.strftime('%a %d %b %Y at %H:%M')} HKT? "
+        f"This removes it from Simon's calendar and can't be undone.",
+        reply_markup=cancel_confirm_keyboard(meeting_id),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def _do_cancel(query, chat_id: int, ctx: dict, meeting_id: int) -> None:
+    meeting = await meet_db.get_meeting(meeting_id)
+    if not _owns(meeting, chat_id):
+        await query.edit_message_text("Sorry, I can't find that booking any more.")
+        await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+        return
+    cal_uid = meeting.get("calendar_uid")
+    if cal_uid:
+        await cal_svc.delete_event(cal_uid)
+    await meet_db.update_meeting(meeting_id, status="cancelled")
+    start = datetime.fromisoformat(meeting["start_dt"]).astimezone(HKT)
+    ref = meet_db.booking_ref(meeting_id)
+    await query.edit_message_text(
+        f"🗑 Booking <b>{ref}</b> on {start.strftime('%a %d %b at %H:%M')} HKT has been cancelled.",
+        parse_mode=ParseMode.HTML,
+    )
     await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
 
 

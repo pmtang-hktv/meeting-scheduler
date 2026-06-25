@@ -45,5 +45,13 @@ def edit_fields_keyboard(meeting_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📍 Location", callback_data=f"editfield:{meeting_id}:location")],
         [InlineKeyboardButton("📝 Purpose", callback_data=f"editfield:{meeting_id}:purpose")],
         [InlineKeyboardButton("👤 Organiser", callback_data=f"editfield:{meeting_id}:organiser")],
+        [InlineKeyboardButton("🗑 Cancel this booking", callback_data=f"editdelete:{meeting_id}")],
         [InlineKeyboardButton("✅ Done", callback_data="editcancel")],
+    ])
+
+
+def cancel_confirm_keyboard(meeting_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑 Yes, cancel it", callback_data=f"editdelyes:{meeting_id}")],
+        [InlineKeyboardButton("← No, keep it", callback_data=f"editpick:{meeting_id}")],
     ])

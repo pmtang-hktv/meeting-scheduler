@@ -93,3 +93,53 @@ async def test_datetime_edit_adopts_duration_from_a_time_range():
         await edit.apply_field_edit(update, None, 555, ctx, [], "tomorrow 12:00-12:30pm")
 
     assert captured.get("duration_mins") == 30
+
+
+@pytest.mark.asyncio
+async def test_cancel_deletes_event_and_marks_cancelled():
+    import bot.handlers.edit as edit
+
+    meeting = {
+        "id": 91, "requester_chat_id": 555, "status": "confirmed",
+        "calendar_uid": "UID91",
+        "start_dt": hkt(2099, 6, 26, 9, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "organizer_name": "Pat",
+    }
+    query = AsyncMock()
+    captured = {}
+
+    async def fake_update_meeting(mid, **fields):
+        captured["mid"] = mid
+        captured.update(fields)
+
+    delete = AsyncMock(return_value=True)
+    with patch.object(edit.meet_db, "get_meeting", AsyncMock(return_value=meeting)), \
+         patch.object(edit.meet_db, "update_meeting", fake_update_meeting), \
+         patch.object(edit.cal_svc, "delete_event", delete), \
+         patch.object(edit.conv_db, "reset_conversation", AsyncMock()):
+        await edit._do_cancel(query, 555, {"organizer_name": "Pat"}, 91)
+
+    delete.assert_awaited_once_with("UID91")
+    assert captured == {"mid": 91, "status": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_other_users_booking():
+    """Ownership guard: a different chat_id must not be able to cancel the booking."""
+    import bot.handlers.edit as edit
+
+    meeting = {
+        "id": 91, "requester_chat_id": 555, "status": "confirmed", "calendar_uid": "UID91",
+        "start_dt": hkt(2099, 6, 26, 9, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "organizer_name": "Pat",
+    }
+    delete = AsyncMock()
+    update = AsyncMock()
+    with patch.object(edit.meet_db, "get_meeting", AsyncMock(return_value=meeting)), \
+         patch.object(edit.meet_db, "update_meeting", update), \
+         patch.object(edit.cal_svc, "delete_event", delete), \
+         patch.object(edit.conv_db, "reset_conversation", AsyncMock()):
+        await edit._do_cancel(AsyncMock(), 999, {}, 91)  # wrong chat_id
+
+    delete.assert_not_awaited()
+    update.assert_not_awaited()

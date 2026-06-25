@@ -94,7 +94,7 @@ def build_application(settings: Settings) -> Application:
     # claim the query (same pattern as the owner approve/reject buttons).
     app.add_handler(CallbackQueryHandler(
         edit_handler.handle_edit_callback,
-        pattern=r"^(menu:new|menu:change|editcancel|editpick:|editfield:)",
+        pattern=r"^(menu:new|menu:change|editcancel|editpick:|editfield:|editdelete:|editdelyes:)",
     ))
     app.add_handler(CallbackQueryHandler(owner_handler.handle_owner_callback, pattern=r"^(approve|reject):"))
     app.add_error_handler(error_handler.error_handler)
