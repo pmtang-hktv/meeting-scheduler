@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from calendar_integration.calendar_service import get_events
+from calendar_integration.calendar_service import find_event, get_events
 from db.meetings import get_confirmed_meetings_in_range, update_meeting
 
 logger = logging.getLogger(__name__)
@@ -15,6 +15,33 @@ from scheduling.rules import (
     find_candidate_slots,
     _overlaps_any,
 )
+
+
+async def _resolve_missing_event(m: dict) -> str:
+    """A confirmed DB meeting's calendar_uid was not among the day's events.
+
+    Distinguish a truly-deleted event from one that was merely MOVED to another day:
+    look the UID up directly. If it still exists, sync the DB record's time to the
+    calendar (so the bot keeps tracking it) and return 'moved'. Only if it is really
+    gone do we cancel the DB record and return 'deleted'.
+    """
+    cal_uid = m["calendar_uid"]
+    event = await find_event(cal_uid)
+    if event is None:
+        logger.info("Meeting %d calendar event %s not found — auto-cancelling DB record", m["id"], cal_uid)
+        await update_meeting(m["id"], status="cancelled")
+        return "deleted"
+    new_start = event.start.astimezone(timezone.utc).isoformat()
+    new_end = event.end.astimezone(timezone.utc).isoformat()
+    if new_start != m.get("start_dt") or new_end != m.get("end_dt"):
+        logger.info(
+            "Meeting %d calendar event %s was moved — syncing DB to %s..%s",
+            m["id"], cal_uid,
+            event.start.astimezone(HKT).strftime("%Y-%m-%d %H:%M"),
+            event.end.astimezone(HKT).strftime("%H:%M"),
+        )
+        await update_meeting(m["id"], start_dt=new_start, end_dt=new_end)
+    return "moved"
 
 
 OWNER_REQUIRES_APPROVAL_REASONS = {
@@ -112,9 +139,10 @@ async def check_slot(
             continue
         cal_uid = m.get("calendar_uid")
         if cal_uid and cal_uid not in cal_uids:
-            logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
-            await update_meeting(m["id"], status="cancelled")
-            displaced.append(m)
+            # Event missing from this day's window: it may have been deleted OR moved
+            # to another day. Only a true deletion should cancel/displace the meeting.
+            if await _resolve_missing_event(m) == "deleted":
+                displaced.append(m)
             continue
         ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
         me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
@@ -181,8 +209,8 @@ async def get_day_intervals(d: date) -> list[tuple[datetime, datetime]] | None:
     for m in db_mtgs:
         cal_uid = m.get("calendar_uid")
         if cal_uid and cal_uid not in cal_uids:
-            logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)
-            await update_meeting(m["id"], status="cancelled")
+            # Missing from this day: cancel only if truly deleted, else sync the move.
+            await _resolve_missing_event(m)
             continue
         ms = datetime.fromisoformat(m["start_dt"]).astimezone(HKT)
         me = datetime.fromisoformat(m["end_dt"]).astimezone(HKT)
