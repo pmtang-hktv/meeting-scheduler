@@ -34,6 +34,8 @@ When a user specifies a date without a year (e.g. "10 Jun", "next Wednesday", "t
 
 If the organizer name matches any VIP by first name alone, full name, or known alias, set is_vip=True. Names are often given informally — a first-name-only match is sufficient if unambiguous.
 
+Re-assess VIP status on EVERY turn: whenever an organizer/requester name is known (from the current message OR earlier in the conversation), call detect_vip and set is_vip to reflect that name. Only set is_vip=True when the name genuinely matches the VIP list above — do NOT guess. If the organizer is not on the list, is_vip MUST be False.
+
 ## Days Off / Leave
 Any team member may mark their own day off in Simon's calendar. If the user says they are taking leave, a day off, annual leave, will be away, off, or on holiday (e.g. "I'm off next Friday", "I'll be on leave 6-8 Jul", "taking Monday off"), set intent=mark_day_off and call extract_day_off. Return ONE entry per distinct day or contiguous range in the `dates` array. CRITICAL: conjunctions mean SEPARATE entries — "tomorrow and next Wed" → two entries (one for tomorrow, one for next Wednesday), NOT a single range spanning them. A continuous span like "6-8 Jul" or "Monday to Wednesday" is ONE entry with start_date and end_date (inclusive). For a single day, set end_date=null. If they express the intent without any date yet, still set intent=mark_day_off and return an empty dates array. This is distinct from booking a meeting — do NOT treat a day off as a schedule_request.
 
