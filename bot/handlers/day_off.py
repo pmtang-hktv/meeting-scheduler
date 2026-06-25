@@ -47,50 +47,77 @@ def _format_range(start: str, end: str | None) -> str:
     return f"{s.strftime('%a %d %b')} – {e.strftime('%a %d %b %Y')}"
 
 
+def _format_segments(pending: list[dict]) -> str:
+    return ", ".join(_format_range(seg["start"], seg["end"]) for seg in pending)
+
+
+def _normalize(segments) -> list[dict]:
+    """Validate, drop past entries, clip a partly-past range to today, and sort.
+    Returns a list of {"start": iso, "end": iso} with inclusive end."""
+    today = datetime.now(tz=HKT).date()
+    out: list[tuple[date, date]] = []
+    for seg in segments or []:
+        try:
+            sd = date.fromisoformat(seg["start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        ed = None
+        if seg.get("end"):
+            try:
+                ed = date.fromisoformat(seg["end"])
+            except (TypeError, ValueError):
+                ed = None
+        if ed is None or ed < sd:
+            ed = sd
+        if ed < today:          # whole entry already passed
+            continue
+        if sd < today:          # started in the past but still ongoing → clip
+            sd = today
+        out.append((sd, ed))
+    out.sort()
+    return [{"start": s.isoformat(), "end": e.isoformat()} for s, e in out]
+
+
+def _segments_from_turn(turn) -> list:
+    segs = list(turn.day_off_dates or [])
+    if not segs and turn.proposed_dt:
+        segs = [{"start": turn.proposed_dt.date().isoformat(), "end": None}]
+    return segs
+
+
 # --------------------------------------------------------------------------- #
 # Entry from colleague.handle_message                                          #
 # --------------------------------------------------------------------------- #
 
 async def start_from_intent(update: Update, chat_id: int, ctx: dict, history: list[dict], turn) -> int:
-    start = turn.day_off_start
-    if not start and turn.proposed_dt:
-        start = turn.proposed_dt.date().isoformat()
-    end = turn.day_off_end
     name = ctx.get("organizer_name") or turn.day_off_person or turn.organizer_name
-    return await _offer(update, chat_id, ctx, history, start, end, name)
+    return await _offer(update, chat_id, ctx, history, _segments_from_turn(turn), name)
 
 
 async def handle_followup(update: Update, chat_id: int, ctx: dict, history: list[dict], text: str, state: str) -> int:
     if state == "AWAITING_DAYOFF_CONFIRM":
-        start = ctx.get("pending_dayoff_start")
-        end = ctx.get("pending_dayoff_end")
+        pending = ctx.get("pending_dayoff_segments")
         name = ctx.get("organizer_name")
-        if start and name:
-            label = _format_range(start, end)
+        if pending and name:
             await update.message.reply_text(
-                f"Please tap a button below: mark <b>{html.escape(name)}</b> off on <b>{label}</b>?",
+                f"Please tap a button below: mark <b>{html.escape(name)}</b> off on "
+                f"<b>{_format_segments(pending)}</b>?",
                 parse_mode=ParseMode.HTML,
                 reply_markup=dayoff_confirm_keyboard(),
             )
             return ConversationHandler.END
-        return await _offer(update, chat_id, ctx, history, start, end, name)
+        return await _offer(update, chat_id, ctx, history, pending or [], name)
 
     if state == "AWAITING_DAYOFF_NAME":
         name = text.strip()
         if not name:
             await update.message.reply_text("Please type your name.", reply_markup=cancel_dayoff_keyboard())
             return ConversationHandler.END
-        return await _offer(
-            update, chat_id, ctx, history,
-            ctx.get("pending_dayoff_start"), ctx.get("pending_dayoff_end"), name,
-        )
+        return await _offer(update, chat_id, ctx, history, ctx.get("pending_dayoff_segments") or [], name)
 
     # AWAITING_DAYOFF_DATE — re-parse the typed date(s) with leave context for reliability.
     parsed = await process_turn([], f"I am taking a day off / on leave on these date(s): {text}")
-    start = parsed.day_off_start
-    if not start and parsed.proposed_dt:
-        start = parsed.proposed_dt.date().isoformat()
-    return await _offer(update, chat_id, ctx, history, start, parsed.day_off_end, ctx.get("organizer_name"))
+    return await _offer(update, chat_id, ctx, history, _segments_from_turn(parsed), ctx.get("organizer_name"))
 
 
 # --------------------------------------------------------------------------- #
@@ -98,39 +125,20 @@ async def handle_followup(update: Update, chat_id: int, ctx: dict, history: list
 # --------------------------------------------------------------------------- #
 
 async def _offer(update: Update, chat_id: int, ctx: dict, history: list[dict],
-                 start: str | None, end: str | None, name: str | None) -> int:
-    if not start:
-        await update.message.reply_text(_ASK_DATE, parse_mode=ParseMode.HTML, reply_markup=cancel_dayoff_keyboard())
-        await conv_db.upsert_conversation(chat_id, "AWAITING_DAYOFF_DATE", ctx, history)
-        return ConversationHandler.END
-
-    try:
-        start_d = date.fromisoformat(start)
-    except ValueError:
-        start_d = None
-    if start_d is None or start_d < datetime.now(tz=HKT).date():
-        ctx.pop("pending_dayoff_start", None)
-        ctx.pop("pending_dayoff_end", None)
+                 segments: list, name: str | None) -> int:
+    pending = _normalize(segments)
+    if not pending:
+        ctx.pop("pending_dayoff_segments", None)
         await update.message.reply_text(
-            "That date has already passed (or I couldn't read it). Please give a future date — e.g. <b>next Friday</b>.",
+            _ASK_DATE if not segments else
+            "Those dates have already passed (or I couldn't read them). Please give a future date — e.g. <b>next Friday</b>.",
             parse_mode=ParseMode.HTML,
             reply_markup=cancel_dayoff_keyboard(),
         )
         await conv_db.upsert_conversation(chat_id, "AWAITING_DAYOFF_DATE", ctx, history)
         return ConversationHandler.END
 
-    end_d = None
-    if end:
-        try:
-            end_d = date.fromisoformat(end)
-        except ValueError:
-            end_d = None
-    if end_d and end_d < start_d:
-        end_d = None
-    end_iso = (end_d or start_d).isoformat()
-
-    ctx["pending_dayoff_start"] = start_d.isoformat()
-    ctx["pending_dayoff_end"] = end_iso
+    ctx["pending_dayoff_segments"] = pending
 
     if not name:
         await update.message.reply_text(
@@ -142,9 +150,8 @@ async def _offer(update: Update, chat_id: int, ctx: dict, history: list[dict],
         return ConversationHandler.END
 
     ctx["organizer_name"] = name
-    label = _format_range(start_d.isoformat(), end_iso)
     await update.message.reply_text(
-        f"Mark <b>{html.escape(name)}</b> as off on <b>{label}</b>? "
+        f"Mark <b>{html.escape(name)}</b> as off on <b>{_format_segments(pending)}</b>? "
         f"This adds an all-day event to Simon's calendar and notifies him.",
         parse_mode=ParseMode.HTML,
         reply_markup=dayoff_confirm_keyboard(),
@@ -238,34 +245,41 @@ async def _do_delete(query, chat_id: int, ctx: dict, day_off_id: int) -> None:
 
 async def _create_day_off(query, chat_id: int, ctx: dict) -> None:
     name = ctx.get("organizer_name")
-    start = ctx.get("pending_dayoff_start")
-    end = ctx.get("pending_dayoff_end") or start
-    if not (name and start):
+    pending = ctx.get("pending_dayoff_segments") or []
+    if not (name and pending):
         await query.edit_message_text("Something went wrong — please type /menu and try again.")
         await conv_db.reset_conversation(chat_id, known_name=name)
         return
 
-    end_exclusive = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
     title = f"Day Off — {name}"
-    day_off_id = await do_db.create_day_off(chat_id, name, start, end)
-    uid = await cal_svc.create_all_day_event(title, start, end_exclusive, notes="Marked via scheduling bot")
-    label = _format_range(start, end)
-    ref = do_db.day_off_ref(day_off_id)
-    if uid:
-        await do_db.set_calendar_uid(day_off_id, uid)
+    created: list[tuple[int, str, str]] = []
+    for seg in pending:
+        start, end = seg["start"], seg["end"]
+        end_exclusive = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+        day_off_id = await do_db.create_day_off(chat_id, name, start, end)
+        uid = await cal_svc.create_all_day_event(title, start, end_exclusive, notes="Marked via scheduling bot")
+        if uid:
+            await do_db.set_calendar_uid(day_off_id, uid)
+            created.append((day_off_id, start, end))
+        else:
+            await do_db.cancel_day_off(day_off_id)
+
+    if created:
+        lines = "\n".join(
+            f"• {_format_range(s, e)} (<b>{do_db.day_off_ref(i)}</b>)" for i, s, e in created
+        )
         await query.edit_message_text(
-            f"✅ Day off recorded for <b>{html.escape(name)}</b> on <b>{label}</b>.\n"
-            f"Reference <b>{ref}</b>. Type /menu → 🌴 to view or remove it.",
+            f"✅ Day off recorded for <b>{html.escape(name)}</b>:\n{lines}\n\n"
+            f"Type /menu → 🌴 to view or remove.",
             parse_mode=ParseMode.HTML,
         )
-        await owner_notify.send_owner_message(f"{name} marked {label} as a day off.")
+        summary = ", ".join(_format_range(s, e) for _, s, e in created)
+        await owner_notify.send_owner_message(f"{name} marked {summary} as day(s) off.")
     else:
-        await do_db.cancel_day_off(day_off_id)
         await query.edit_message_text(
-            "Sorry, I couldn't add the calendar event just now. Please try again in a moment."
+            "Sorry, I couldn't add the calendar event(s) just now. Please try again in a moment."
         )
-    for k in ("pending_dayoff_start", "pending_dayoff_end"):
-        ctx.pop(k, None)
+    ctx.pop("pending_dayoff_segments", None)
     await conv_db.reset_conversation(chat_id, known_name=name)
 
 

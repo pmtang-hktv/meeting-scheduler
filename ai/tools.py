@@ -60,20 +60,33 @@ TOOLS = [
     {
         "name": "extract_day_off",
         "description": (
-            "Extract the date or date range for a day-off / leave request "
-            "(use when intent is mark_day_off). Resolve relative dates to the nearest "
-            "future occurrence, never a past year."
+            "Extract the day(s) off for a leave request (use when intent is mark_day_off). "
+            "Return ONE entry per distinct day or contiguous range. Treat conjunctions as "
+            "SEPARATE entries: 'Tuesday and Thursday' = two entries; 'tomorrow and next Wed' "
+            "= two entries. A continuous span like '6-8 Jul' or 'Mon to Wed' = ONE entry with "
+            "start and end. Resolve relative dates to the nearest future occurrence, never a "
+            "past year."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "start_date": {
-                    "type": ["string", "null"],
-                    "description": "First day off as an ISO date YYYY-MM-DD. Null if not stated yet.",
-                },
-                "end_date": {
-                    "type": ["string", "null"],
-                    "description": "Last day off (inclusive) as YYYY-MM-DD. Null for a single day.",
+                "dates": {
+                    "type": "array",
+                    "description": "One entry per distinct day or contiguous range the person is off.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_date": {
+                                "type": "string",
+                                "description": "First day of this entry, ISO date YYYY-MM-DD.",
+                            },
+                            "end_date": {
+                                "type": ["string", "null"],
+                                "description": "Last day (inclusive) for a range, else null for a single day.",
+                            },
+                        },
+                        "required": ["start_date"],
+                    },
                 },
                 "person_name": {
                     "type": ["string", "null"],

@@ -22,8 +22,7 @@ class ToolResults:
         self.missing_field_asked: str | None = None
         self.reply: str | None = None
         self.reply_type: str | None = None
-        self.day_off_start: str | None = None
-        self.day_off_end: str | None = None
+        self.day_off_dates: list[dict[str, Any]] = []  # [{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"|None}]
         self.day_off_person: str | None = None
 
 
@@ -49,10 +48,13 @@ def execute_tool(name: str, inputs: dict[str, Any], results: ToolResults) -> str
         return "Details extracted"
 
     if name == "extract_day_off":
-        if inputs.get("start_date"):
-            results.day_off_start = inputs["start_date"]
-        if inputs.get("end_date"):
-            results.day_off_end = inputs["end_date"]
+        segments: list[dict[str, Any]] = []
+        for seg in inputs.get("dates") or []:
+            start = seg.get("start_date")
+            if start:
+                segments.append({"start": start, "end": seg.get("end_date")})
+        if segments:
+            results.day_off_dates = segments
         if inputs.get("person_name"):
             results.day_off_person = inputs["person_name"]
         return "Day off extracted"
