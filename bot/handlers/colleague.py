@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ai.claude_client import evaluate_location_reply
 from ai.intent import process_turn, ConversationTurn
-from bot.keyboards import slot_choice_keyboard
+from bot.keyboards import main_menu_keyboard, slot_choice_keyboard
 from calendar_integration.calendar_service import create_event, delete_event
 from db import conversations as conv_db, meetings as meet_db, pending as pend_db, follow_ups as fu_db
 from notifications import owner_notify
@@ -89,6 +89,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Location not confirmed yet — stay in AWAITING_LOCATION for the next reply.
         await conv_db.upsert_conversation(chat_id, "AWAITING_LOCATION", ctx, history)
         return AWAITING_LOCATION
+
+    # Edit flow — the user picked a field from the "Change a booking" menu and is now
+    # typing the new value. Routed here (rather than through Claude's scheduling logic)
+    # so a bare value like "45 minutes" updates the existing booking instead of starting
+    # a new one. See bot/handlers/edit.py.
+    if state == "EDITING_FIELD":
+        from bot.handlers import edit as edit_handler
+        return await edit_handler.apply_field_edit(update, context, chat_id, ctx, history, text)
+
+    # The user is mid-menu (choosing which booking, or looking at the edit menu) but typed
+    # instead of tapping a button. Nudge them back to the buttons rather than mis-parsing
+    # the text as a new request.
+    if state in ("CHOOSING_BOOKING", "EDIT_MENU"):
+        await update.message.reply_text(
+            "Please tap one of the buttons above, or type /menu to start over."
+        )
+        return GATHERING_INFO
 
     # Greet returning users and pre-fill their name so the bot doesn't ask again
     known_name = ctx.get("organizer_name")
@@ -205,22 +222,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # so they can answer in one message rather than going back and forth.
     if turn.intent not in ("schedule_request", "reschedule"):
         _no_fields_yet = not any(ctx.get(f) for f in ("purpose", "duration_mins", "proposed_dt"))
+        menu = None
         if known_name and _no_fields_yet:
             greeting = f"Welcome back, <b>{known_name}</b>! " if _is_fresh_returning else f"Hi <b>{known_name}</b>! "
             reply = (
-                f"{greeting}To book a meeting with Simon, please tell me:\n\n"
-                f"1. <b>What is the meeting about?</b> (the purpose)\n"
-                f"2. <b>When</b> would you like to meet? (date and time)\n"
-                f"3. <b>How long</b> will it take? (duration in minutes)\n"
-                f"4. Are you <b>internal</b> (HKTV colleague) or <b>external</b>? (if external, which area/district?)"
+                f"{greeting}Would you like to make a new booking or change an existing one? "
+                f"Tap a button below — or just tell me what the meeting is about, when, "
+                f"how long, and whether you're internal or external."
             )
+            # Offer the two-button menu at the start of a fresh conversation.
+            menu = main_menu_keyboard()
         else:
             base = _md_to_html(turn.reply or "How can I help you schedule a meeting?")
             reply = f"Welcome back, <b>{known_name}</b>! {base}" if _is_fresh_returning else base
         if show_check_tip:
             reply += _TIPS
             ctx["check_tip_shown_at"] = datetime.now(tz=timezone.utc).isoformat()
-        await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(reply, parse_mode=ParseMode.HTML, reply_markup=menu)
         await conv_db.upsert_conversation(chat_id, "GATHERING_INFO", ctx, history)
         return GATHERING_INFO
 
@@ -389,11 +407,14 @@ async def _confirm_meeting(
     if uid:
         await meet_db.update_meeting(meeting_id, calendar_uid=uid, status="confirmed")
         await _schedule_location_followups(meeting_id, start_dt, ctx.get("is_external", False))
+        ref = meet_db.booking_ref(meeting_id)
+        base = f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
+        if ctx.get("is_external"):
+            base += " We will follow up if exact location details are needed."
         msg = (
-            f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
-            f" We will follow up if exact location details are needed."
-            if ctx.get("is_external")
-            else f"Your meeting has been confirmed for {local_start} HKT ({duration_mins} min)."
+            f"{base}\n\n"
+            f"Your booking reference is <b>{ref}</b>. "
+            f"To change it later, type /menu and choose <b>Change a booking</b>."
         )
     else:
         # Calendar write failed — keep meeting pending so Simon can resolve it, and tell the truth.
@@ -407,7 +428,7 @@ async def _confirm_meeting(
             f"I've recorded your request for {local_start} HKT ({duration_mins} min), "
             f"but the calendar event could not be created. {owner_name} will follow up shortly."
         )
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
     await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
     return ConversationHandler.END
 

@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 from ai import claude_client
-from bot.handlers import colleague, error as error_handler, owner as owner_handler
+from bot.handlers import colleague, edit as edit_handler, error as error_handler, owner as owner_handler
 from bot.handlers.colleague import (
     GATHERING_INFO,
     CHECKING_AVAILABILITY,
@@ -87,7 +87,15 @@ def build_application(settings: Settings) -> Application:
 
     # Commands take precedence over the ConversationHandler so they work in any state.
     app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(CommandHandler("start", edit_handler.menu_command))
+    app.add_handler(CommandHandler("menu", edit_handler.menu_command))
     app.add_handler(conv_handler)
+    # Global callback handlers fall through here when the ConversationHandler doesn't
+    # claim the query (same pattern as the owner approve/reject buttons).
+    app.add_handler(CallbackQueryHandler(
+        edit_handler.handle_edit_callback,
+        pattern=r"^(menu:new|menu:change|editcancel|editpick:|editfield:)",
+    ))
     app.add_handler(CallbackQueryHandler(owner_handler.handle_owner_callback, pattern=r"^(approve|reject):"))
     app.add_error_handler(error_handler.error_handler)
 

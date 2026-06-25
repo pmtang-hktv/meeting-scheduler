@@ -185,6 +185,40 @@ async def create_event(
     return uid
 
 
+async def update_event(
+    uid: str,
+    *,
+    title: str | None = None,
+    start_dt: datetime | None = None,
+    end_dt: datetime | None = None,
+    location: str | None = None,
+    notes: str | None = None,
+) -> bool:
+    """Patch an existing calendar event in place, preserving its UID and attendees.
+
+    Only the fields passed (non-None) are changed. Returns True on success.
+    """
+    body: dict = {}
+    if title is not None:
+        body["summary"] = title
+    if location is not None:
+        body["location"] = location
+    if notes is not None:
+        body["description"] = notes
+    if start_dt is not None:
+        body["start"] = {"dateTime": start_dt.astimezone(timezone.utc).isoformat(), "timeZone": "Asia/Hong_Kong"}
+    if end_dt is not None:
+        body["end"] = {"dateTime": end_dt.astimezone(timezone.utc).isoformat(), "timeZone": "Asia/Hong_Kong"}
+    if not body:
+        return True
+    cal_id = await _get_write_calendar_id()
+    result = await google_cal_client.api_patch_event(cal_id, uid, body)
+    if result:
+        _invalidate_events_cache()
+        return True
+    return False
+
+
 async def delete_event(uid: str) -> bool:
     cal_id = await _get_write_calendar_id()
     ok = await google_cal_client.api_delete_event(cal_id, uid)

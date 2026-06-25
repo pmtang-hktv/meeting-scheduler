@@ -95,9 +95,11 @@ async def _approve_meeting(query, confirmation: dict, meeting: dict) -> None:
 
     if _bot:
         if uid:
+            ref = meet_db.booking_ref(meeting["id"])
             msg = (
                 f"Great news! Your meeting request has been approved.\n"
-                f"Confirmed for {local_start} ({meeting['duration_mins']} min)."
+                f"Confirmed for {local_start} ({meeting['duration_mins']} min).\n"
+                f"Your booking reference is {ref}. To change it later, type /menu."
             )
         else:
             msg = (

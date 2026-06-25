@@ -76,6 +76,31 @@ async def get_latest_confirmed_meeting(requester_chat_id: int) -> dict[str, Any]
             return dict(row) if row else None
 
 
+async def get_upcoming_confirmed_meetings(
+    requester_chat_id: int, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Return this requester's upcoming confirmed meetings, soonest first."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        async with db.execute(
+            """
+            SELECT * FROM meetings
+            WHERE requester_chat_id = ?
+              AND status = 'confirmed'
+              AND end_dt > ?
+            ORDER BY start_dt ASC
+            LIMIT ?
+            """,
+            (requester_chat_id, now, limit),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+def booking_ref(meeting_id: int) -> str:
+    """Human-facing reference shown to requesters, e.g. 'BK-0042'."""
+    return f"BK-{meeting_id:04d}"
+
+
 async def get_confirmed_meetings_in_range(start_iso: str, end_iso: str) -> list[dict[str, Any]]:
     """Return confirmed meetings whose time overlaps [start_iso, end_iso)."""
     async with get_db() as db:

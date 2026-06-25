@@ -34,6 +34,7 @@ async def check_slot(
     is_vip: bool = False,
     is_urgent: bool = False,
     travel_mins: int = 0,
+    exclude_uid: str | None = None,
 ) -> dict:
     """
     Returns:
@@ -91,6 +92,11 @@ async def check_slot(
             "displaced_meetings": [],
         }
 
+    # When rescheduling a meeting, ignore its own existing event so it doesn't
+    # register as a conflict against the new (possibly overlapping) time.
+    if exclude_uid:
+        cal_events = [e for e in cal_events if e.uid != exclude_uid]
+
     cal_uids = {e.uid for e in cal_events}
     event_intervals: list[tuple[datetime, datetime]] = [(e.start, e.end) for e in cal_events]
 
@@ -102,6 +108,8 @@ async def check_slot(
         day_end.astimezone(timezone.utc).isoformat(),
     )
     for m in db_meetings:
+        if exclude_uid and m.get("calendar_uid") == exclude_uid:
+            continue
         cal_uid = m.get("calendar_uid")
         if cal_uid and cal_uid not in cal_uids:
             logger.info("Meeting %d calendar event %s was deleted — auto-cancelling DB record", m["id"], cal_uid)

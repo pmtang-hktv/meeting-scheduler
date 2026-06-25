@@ -137,3 +137,14 @@ async def api_get_event(calendar_id: str, event_id: str) -> dict | None:
     except Exception:
         logger.exception("Failed to get event %s", event_id)
         return None
+
+
+async def api_patch_event(calendar_id: str, event_id: str, body: dict) -> dict | None:
+    try:
+        svc = get_service()
+        return await _run(
+            lambda: svc.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+        )
+    except Exception:
+        logger.exception("Failed to patch event %s", event_id)
+        return None
