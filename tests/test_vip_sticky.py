@@ -31,8 +31,8 @@ def _turn(is_vip: bool) -> ConversationTurn:
 async def test_is_vip_is_not_sticky():
     import bot.handlers.colleague as col
 
-    # Existing conversation already has is_vip=True latched from a prior turn.
-    existing_ctx = {"organizer_name": "Winnie AY", "is_vip": True}
+    # Existing conversation already has is_vip/is_urgent=True latched from a prior turn.
+    existing_ctx = {"organizer_name": "Winnie AY", "is_vip": True, "is_urgent": True}
     row = {
         "state": "GATHERING_INFO",
         "context_json": json.dumps(existing_ctx),
@@ -53,6 +53,7 @@ async def test_is_vip_is_not_sticky():
          patch.object(col.conv_db, "upsert_conversation", fake_upsert):
         await col.handle_message(update, None)
 
-    # The current turn said not-VIP, so the persisted context must be False, not the
-    # latched True from before.
+    # The current turn said not-VIP / not-urgent, so the persisted context must be
+    # False, not the latched True from before.
     assert captured["ctx"]["is_vip"] is False
+    assert captured["ctx"]["is_urgent"] is False

@@ -163,14 +163,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ctx["is_external"] = False
     if turn.location_area:
         ctx["location_area"] = turn.location_area
-    # is_vip is NOT sticky: re-evaluate it from the current turn every time. Claude
-    # sees the full conversation history each turn, so a genuine VIP is still detected
-    # from earlier context — but a one-off mis-read no longer latches VIP handling onto
-    # every subsequent request in the conversation.
+    # is_vip / is_urgent are NOT sticky: re-evaluate them from the current turn every
+    # time. Claude sees the full conversation history each turn, so a genuine VIP or
+    # urgent request is still detected from earlier context — but a one-off mis-read no
+    # longer latches that handling onto every subsequent request in the conversation.
     ctx["is_vip"] = turn.is_vip
     if turn.is_vip:
         logger.info("VIP flagged for chat %s (organizer=%s)", chat_id, ctx.get("organizer_name"))
-    ctx["is_urgent"] = ctx.get("is_urgent", False) or turn.is_urgent
+    ctx["is_urgent"] = turn.is_urgent
+    if turn.is_urgent:
+        logger.info("Urgent flagged for chat %s (organizer=%s)", chat_id, ctx.get("organizer_name"))
 
     # Day-off / leave request — handle before meeting logic so "I'm off Friday" isn't
     # treated as a booking. See bot/handlers/day_off.py.
