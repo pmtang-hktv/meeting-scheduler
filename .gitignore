@@ -15,3 +15,8 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+
+# Secrets / local artifacts
+credentials.json
+service_account.json
+.DS_Store

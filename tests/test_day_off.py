@@ -88,7 +88,67 @@ async def test_normalize_drops_past_and_keeps_future():
     import bot.handlers.day_off as do
     segs = [{"start": "2000-01-01", "end": None}, {"start": "2099-07-03", "end": None}]
     norm = do._normalize(segs)
-    assert norm == [{"start": "2099-07-03", "end": "2099-07-03"}]
+    assert norm == [{"start": "2099-07-03", "end": "2099-07-03", "half": None}]
+
+
+@pytest.mark.asyncio
+async def test_normalize_keeps_half_on_single_day_drops_on_range():
+    import bot.handlers.day_off as do
+    norm = do._normalize([
+        {"start": "2099-07-03", "end": None, "half": "pm"},
+        {"start": "2099-07-06", "end": "2099-07-08", "half": "am"},  # range → half dropped
+    ])
+    assert norm == [
+        {"start": "2099-07-03", "end": "2099-07-03", "half": "pm"},
+        {"start": "2099-07-06", "end": "2099-07-08", "half": None},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_half_day_button_override_sets_title_and_stores_half():
+    """Tapping 'Afternoon only' overrides the entry and labels the calendar event."""
+    import bot.handlers.day_off as do
+    calls = []
+    stored = []
+
+    async def fake_all_day(title, start_date, end_date, notes=""):
+        calls.append((title, start_date, end_date))
+        return "UID"
+
+    async def fake_create(chat_id, name, start, end, half_day=None):
+        stored.append(half_day)
+        return 7
+
+    import contextlib
+    with contextlib.ExitStack() as st:
+        for p in _patches(do, fake_all_day):
+            st.enter_context(p)
+        st.enter_context(patch.object(do.do_db, "create_day_off", fake_create))
+        ctx = {"organizer_name": "Peter", "pending_dayoff_segments": [{"start": "2099-07-03", "end": "2099-07-03", "half": None}]}
+        await do._create_day_off(AsyncMock(), 555, ctx, half_override="pm")
+
+    assert calls == [("Day Off (PM) — Peter", "2099-07-03", "2099-07-04")]
+    assert stored == ["pm"]
+
+
+@pytest.mark.asyncio
+async def test_half_from_entry_used_when_no_override():
+    """A half extracted from natural language is honoured without a button tap."""
+    import bot.handlers.day_off as do
+    calls = []
+
+    async def fake_all_day(title, start_date, end_date, notes=""):
+        calls.append(title)
+        return "UID"
+
+    import contextlib
+    with contextlib.ExitStack() as st:
+        for p in _patches(do, fake_all_day):
+            st.enter_context(p)
+        ctx = {"organizer_name": "Amy", "pending_dayoff_segments": [{"start": "2099-07-03", "end": "2099-07-03", "half": "am"}]}
+        await do._create_day_off(AsyncMock(), 555, ctx)
+
+    assert calls == ["Day Off (AM) — Amy"]
 
 
 @pytest.mark.asyncio

@@ -29,11 +29,17 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def dayoff_confirm_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Confirm day off", callback_data="dayoff:yes")],
-        [InlineKeyboardButton("✖ Cancel", callback_data="dayoff:no")],
-    ])
+def dayoff_confirm_keyboard(offer_halves: bool = True) -> InlineKeyboardMarkup:
+    """Confirm a day off. When offer_halves is set (all pending entries are single
+    days), also offer one-tap morning-only / afternoon-only variants."""
+    rows = [[InlineKeyboardButton("✅ Confirm full day", callback_data="dayoff:yes")]]
+    if offer_halves:
+        rows.append([
+            InlineKeyboardButton("🌅 Morning only", callback_data="dayoff:yes:am"),
+            InlineKeyboardButton("🌇 Afternoon only", callback_data="dayoff:yes:pm"),
+        ])
+    rows.append([InlineKeyboardButton("✖ Cancel", callback_data="dayoff:no")])
+    return InlineKeyboardMarkup(rows)
 
 
 def cancel_dayoff_keyboard() -> InlineKeyboardMarkup:

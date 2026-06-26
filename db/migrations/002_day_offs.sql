@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS day_offs (
     person_name       TEXT NOT NULL,
     start_date        TEXT NOT NULL,   -- YYYY-MM-DD, inclusive
     end_date          TEXT NOT NULL,   -- YYYY-MM-DD, inclusive last day
+    half_day          TEXT,            -- NULL = whole day, 'am' = morning only, 'pm' = afternoon only
     calendar_uid      TEXT,
     status            TEXT NOT NULL DEFAULT 'confirmed',
     created_at        TEXT NOT NULL DEFAULT (datetime('now'))

@@ -84,6 +84,16 @@ TOOLS = [
                                 "type": ["string", "null"],
                                 "description": "Last day (inclusive) for a range, else null for a single day.",
                             },
+                            "half_day": {
+                                "type": ["string", "null"],
+                                "enum": ["am", "pm", None],
+                                "description": (
+                                    "'am' for a morning-only half day, 'pm' for an afternoon-only "
+                                    "half day, else null for a whole day. Map 'AL (pm)', 'half day "
+                                    "in the afternoon', 'leaving early' → 'pm'; 'AL (am)', 'morning "
+                                    "off', 'coming in after lunch' → 'am'."
+                                ),
+                            },
                         },
                         "required": ["start_date"],
                     },

@@ -8,16 +8,20 @@ HKT = ZoneInfo("Asia/Hong_Kong")
 
 
 async def create_day_off(
-    requester_chat_id: int, person_name: str, start_date: str, end_date: str
+    requester_chat_id: int,
+    person_name: str,
+    start_date: str,
+    end_date: str,
+    half_day: str | None = None,
 ) -> int:
     now = datetime.now(timezone.utc).isoformat()
     async with get_db() as db:
         cursor = await db.execute(
             """
-            INSERT INTO day_offs (requester_chat_id, person_name, start_date, end_date, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO day_offs (requester_chat_id, person_name, start_date, end_date, half_day, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (requester_chat_id, person_name, start_date, end_date, now),
+            (requester_chat_id, person_name, start_date, end_date, half_day, now),
         )
         await db.commit()
         return cursor.lastrowid  # type: ignore[return-value]

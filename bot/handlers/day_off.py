@@ -39,23 +39,31 @@ _ASK_DATE = (
 )
 
 
-def _format_range(start: str, end: str | None) -> str:
+def _half_suffix(half: str | None) -> str:
+    return {"am": " (AM)", "pm": " (PM)"}.get(half or "", "")
+
+
+def _format_range(start: str, end: str | None, half: str | None = None) -> str:
     s = date.fromisoformat(start)
     e = date.fromisoformat(end) if end else s
     if e <= s:
-        return s.strftime("%a %d %b %Y")
+        return s.strftime("%a %d %b %Y") + _half_suffix(half)
     return f"{s.strftime('%a %d %b')} – {e.strftime('%a %d %b %Y')}"
 
 
 def _format_segments(pending: list[dict]) -> str:
-    return ", ".join(_format_range(seg["start"], seg["end"]) for seg in pending)
+    return ", ".join(_format_range(seg["start"], seg["end"], seg.get("half")) for seg in pending)
+
+
+def _all_single_day(pending: list[dict]) -> bool:
+    return bool(pending) and all(seg["end"] == seg["start"] for seg in pending)
 
 
 def _normalize(segments) -> list[dict]:
     """Validate, drop past entries, clip a partly-past range to today, and sort.
     Returns a list of {"start": iso, "end": iso} with inclusive end."""
     today = datetime.now(tz=HKT).date()
-    out: list[tuple[date, date]] = []
+    out: list[tuple[date, date, str | None]] = []
     for seg in segments or []:
         try:
             sd = date.fromisoformat(seg["start"])
@@ -73,9 +81,13 @@ def _normalize(segments) -> list[dict]:
             continue
         if sd < today:          # started in the past but still ongoing → clip
             sd = today
-        out.append((sd, ed))
-    out.sort()
-    return [{"start": s.isoformat(), "end": e.isoformat()} for s, e in out]
+        half = seg.get("half") if seg.get("half") in ("am", "pm") else None
+        # A half day only makes sense for a single day; drop it on a multi-day span.
+        if ed != sd:
+            half = None
+        out.append((sd, ed, half))
+    out.sort(key=lambda t: (t[0], t[1]))
+    return [{"start": s.isoformat(), "end": e.isoformat(), "half": h} for s, e, h in out]
 
 
 def _segments_from_turn(turn) -> list:
@@ -103,7 +115,7 @@ async def handle_followup(update: Update, chat_id: int, ctx: dict, history: list
                 f"Please tap a button below: mark <b>{html.escape(name)}</b> off on "
                 f"<b>{_format_segments(pending)}</b>?",
                 parse_mode=ParseMode.HTML,
-                reply_markup=dayoff_confirm_keyboard(),
+                reply_markup=dayoff_confirm_keyboard(offer_halves=_all_single_day(pending)),
             )
             return ConversationHandler.END
         return await _offer(update, chat_id, ctx, history, pending or [], name)
@@ -154,7 +166,7 @@ async def _offer(update: Update, chat_id: int, ctx: dict, history: list[dict],
         f"Mark <b>{html.escape(name)}</b> as off on <b>{_format_segments(pending)}</b>? "
         f"This adds an all-day event to Simon's calendar and notifies him.",
         parse_mode=ParseMode.HTML,
-        reply_markup=dayoff_confirm_keyboard(),
+        reply_markup=dayoff_confirm_keyboard(offer_halves=_all_single_day(pending)),
     )
     await conv_db.upsert_conversation(chat_id, "AWAITING_DAYOFF_CONFIRM", ctx, history)
     return ConversationHandler.END
@@ -183,8 +195,9 @@ async def handle_dayoff_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "dayoff:add":
         await conv_db.upsert_conversation(chat_id, "AWAITING_DAYOFF_DATE", ctx, history)
         await query.edit_message_text(_ASK_DATE, parse_mode=ParseMode.HTML)
-    elif data == "dayoff:yes":
-        await _create_day_off(query, chat_id, ctx)
+    elif data == "dayoff:yes" or data.startswith("dayoff:yes:"):
+        half = data.split(":")[2] if data.count(":") == 2 else None
+        await _create_day_off(query, chat_id, ctx, half_override=half if half in ("am", "pm") else None)
     elif data == "dayoff:no":
         await query.edit_message_text("Okay — nothing changed. Type /menu anytime.")
         await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
@@ -203,7 +216,7 @@ async def _show_dayoff_menu(query, chat_id: int, ctx: dict, history: list[dict])
             parse_mode=ParseMode.HTML,
         )
         return
-    items = [(d, _format_range(d["start_date"], d["end_date"])) for d in offs]
+    items = [(d, _format_range(d["start_date"], d["end_date"], d.get("half_day"))) for d in offs]
     await conv_db.upsert_conversation(chat_id, "DAYOFF_MENU", ctx, history)
     await query.edit_message_text(
         "Your upcoming days off — tap 🗑 to remove one, or add another:",
@@ -216,7 +229,7 @@ async def _confirm_delete(query, chat_id: int, ctx: dict, history: list[dict], d
     if not _owns(d, chat_id):
         await query.edit_message_text("Sorry, I can't find that day off any more.")
         return
-    label = _format_range(d["start_date"], d["end_date"])
+    label = _format_range(d["start_date"], d["end_date"], d.get("half_day"))
     await conv_db.upsert_conversation(chat_id, "DAYOFF_MENU", ctx, history)
     await query.edit_message_text(
         f"Remove the day off for <b>{html.escape(d['person_name'])}</b> on <b>{label}</b>?",
@@ -233,7 +246,7 @@ async def _do_delete(query, chat_id: int, ctx: dict, day_off_id: int) -> None:
     if d.get("calendar_uid"):
         await cal_svc.delete_event(d["calendar_uid"])
     await do_db.cancel_day_off(day_off_id)
-    label = _format_range(d["start_date"], d["end_date"])
+    label = _format_range(d["start_date"], d["end_date"], d.get("half_day"))
     ref = do_db.day_off_ref(day_off_id)
     await query.edit_message_text(
         f"🗑 Removed day off <b>{ref}</b> ({html.escape(d['person_name'])} — {label}).",
@@ -243,7 +256,7 @@ async def _do_delete(query, chat_id: int, ctx: dict, day_off_id: int) -> None:
     await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
 
 
-async def _create_day_off(query, chat_id: int, ctx: dict) -> None:
+async def _create_day_off(query, chat_id: int, ctx: dict, half_override: str | None = None) -> None:
     name = ctx.get("organizer_name")
     pending = ctx.get("pending_dayoff_segments") or []
     if not (name and pending):
@@ -251,29 +264,34 @@ async def _create_day_off(query, chat_id: int, ctx: dict) -> None:
         await conv_db.reset_conversation(chat_id, known_name=name)
         return
 
-    title = f"Day Off — {name}"
-    created: list[tuple[int, str, str]] = []
+    created: list[tuple[int, str, str, str | None]] = []
     for seg in pending:
         start, end = seg["start"], seg["end"]
+        # A tapped Morning/Afternoon button overrides any half already on the entry;
+        # a half only applies to a single day, so ignore it on a multi-day span.
+        half = half_override if half_override is not None else seg.get("half")
+        if end != start:
+            half = None
+        title = f"Day Off{_half_suffix(half)} — {name}"
         end_exclusive = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
-        day_off_id = await do_db.create_day_off(chat_id, name, start, end)
+        day_off_id = await do_db.create_day_off(chat_id, name, start, end, half_day=half)
         uid = await cal_svc.create_all_day_event(title, start, end_exclusive, notes="Marked via scheduling bot")
         if uid:
             await do_db.set_calendar_uid(day_off_id, uid)
-            created.append((day_off_id, start, end))
+            created.append((day_off_id, start, end, half))
         else:
             await do_db.cancel_day_off(day_off_id)
 
     if created:
         lines = "\n".join(
-            f"• {_format_range(s, e)} (<b>{do_db.day_off_ref(i)}</b>)" for i, s, e in created
+            f"• {_format_range(s, e, h)} (<b>{do_db.day_off_ref(i)}</b>)" for i, s, e, h in created
         )
         await query.edit_message_text(
             f"✅ Day off recorded for <b>{html.escape(name)}</b>:\n{lines}\n\n"
             f"Type /menu → 🌴 to view or remove.",
             parse_mode=ParseMode.HTML,
         )
-        summary = ", ".join(_format_range(s, e) for _, s, e in created)
+        summary = ", ".join(_format_range(s, e, h) for _, s, e, h in created)
         await owner_notify.send_owner_message(f"{name} marked {summary} as day(s) off.")
     else:
         await query.edit_message_text(

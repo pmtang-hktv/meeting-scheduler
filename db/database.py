@@ -32,4 +32,15 @@ async def init_db(db_path: str) -> None:
         for path in sorted(glob.glob(os.path.join(migrations_dir, "*.sql"))):
             with open(path) as f:
                 await db.executescript(f.read())
+        # Columns added to existing tables after first release. CREATE ... IF NOT
+        # EXISTS won't add them to a DB that already has the table, and SQLite lacks
+        # ADD COLUMN IF NOT EXISTS, so apply these idempotently here.
+        await _ensure_column(db, "day_offs", "half_day", "TEXT")
         await db.commit()
+
+
+async def _ensure_column(db, table: str, column: str, decl: str) -> None:
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    if column not in existing:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
