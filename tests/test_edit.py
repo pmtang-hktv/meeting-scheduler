@@ -131,6 +131,59 @@ async def test_duration_edit_parses_one_hour_without_llm():
 
 
 @pytest.mark.asyncio
+async def test_callback_swallows_message_not_modified():
+    """Re-tapping a booking button re-renders an identical message; Telegram's
+    'Message is not modified' BadRequest must be swallowed, not surfaced as a crash
+    ('Sorry, something went wrong')."""
+    import bot.handlers.edit as edit
+    from telegram.error import BadRequest
+
+    meeting = {
+        "id": 91, "requester_chat_id": 555, "status": "confirmed", "calendar_uid": "UID91",
+        "organizer_name": "Pat", "purpose": "QA meeting", "is_external": 0,
+        "start_dt": hkt(2099, 6, 26, 9, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "end_dt": hkt(2099, 6, 26, 10, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "duration_mins": 60, "location_area": None, "travel_mins": 0,
+    }
+
+    query = AsyncMock()
+    query.data = "editpick:91"
+    query.edit_message_text = AsyncMock(
+        side_effect=BadRequest("Message is not modified: specified new message content ...")
+    )
+    update = AsyncMock()
+    update.callback_query = query
+    update.effective_chat.id = 555
+
+    row = {"context_json": "{}", "history_json": "[]"}
+    with patch.object(edit.conv_db, "get_conversation", AsyncMock(return_value=row)), \
+         patch.object(edit.conv_db, "upsert_conversation", AsyncMock()), \
+         patch.object(edit.meet_db, "get_meeting", AsyncMock(return_value=meeting)):
+        # Must NOT raise.
+        await edit.handle_edit_callback(update, None)
+
+
+@pytest.mark.asyncio
+async def test_callback_reraises_other_bad_requests():
+    """A genuine BadRequest (not the harmless 'not modified') must still propagate."""
+    import bot.handlers.edit as edit
+    from telegram.error import BadRequest
+
+    query = AsyncMock()
+    query.data = "menu:new"
+    query.edit_message_text = AsyncMock(side_effect=BadRequest("Chat not found"))
+    update = AsyncMock()
+    update.callback_query = query
+    update.effective_chat.id = 555
+
+    row = {"context_json": "{}", "history_json": "[]"}
+    with patch.object(edit.conv_db, "get_conversation", AsyncMock(return_value=row)), \
+         patch.object(edit.conv_db, "upsert_conversation", AsyncMock()):
+        with pytest.raises(BadRequest):
+            await edit.handle_edit_callback(update, None)
+
+
+@pytest.mark.asyncio
 async def test_cancel_deletes_event_and_marks_cancelled():
     import bot.handlers.edit as edit
 

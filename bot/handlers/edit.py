@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ai.intent import process_turn, parse_duration_mins
@@ -107,21 +108,28 @@ async def handle_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     ctx: dict = json.loads(row["context_json"]) if row else {}
     history: list[dict] = json.loads(row["history_json"]) if row else []
 
-    if data == "menu:new":
-        await _start_new_booking(query, chat_id, ctx)
-    elif data == "menu:change":
-        await _show_booking_list(query, chat_id, ctx, history)
-    elif data == "editcancel":
-        await _finish(query, chat_id, ctx)
-    elif data.startswith("editpick:"):
-        await _show_edit_menu_callback(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
-    elif data.startswith("editfield:"):
-        _, mid, field = data.split(":", 2)
-        await _prompt_for_field(query, chat_id, ctx, history, int(mid), field)
-    elif data.startswith("editdelete:"):
-        await _confirm_cancel(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
-    elif data.startswith("editdelyes:"):
-        await _do_cancel(query, chat_id, ctx, int(data.split(":", 1)[1]))
+    try:
+        if data == "menu:new":
+            await _start_new_booking(query, chat_id, ctx)
+        elif data == "menu:change":
+            await _show_booking_list(query, chat_id, ctx, history)
+        elif data == "editcancel":
+            await _finish(query, chat_id, ctx)
+        elif data.startswith("editpick:"):
+            await _show_edit_menu_callback(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
+        elif data.startswith("editfield:"):
+            _, mid, field = data.split(":", 2)
+            await _prompt_for_field(query, chat_id, ctx, history, int(mid), field)
+        elif data.startswith("editdelete:"):
+            await _confirm_cancel(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
+        elif data.startswith("editdelyes:"):
+            await _do_cancel(query, chat_id, ctx, int(data.split(":", 1)[1]))
+    except BadRequest as e:
+        # Re-tapping a button re-renders an identical message; Telegram rejects that with
+        # "Message is not modified". It's harmless (the screen already shows what we want),
+        # so swallow it rather than letting it surface as "Sorry, something went wrong".
+        if "not modified" not in str(e).lower():
+            raise
 
 
 async def _start_new_booking(query, chat_id: int, ctx: dict) -> None:

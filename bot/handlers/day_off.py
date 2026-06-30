@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ai.intent import process_turn
@@ -190,21 +191,27 @@ async def handle_dayoff_callback(update: Update, context: ContextTypes.DEFAULT_T
     ctx: dict = json.loads(row["context_json"]) if row else {}
     history: list[dict] = json.loads(row["history_json"]) if row else []
 
-    if data == "menu:dayoff":
-        await _show_dayoff_menu(query, chat_id, ctx, history)
-    elif data == "dayoff:add":
-        await conv_db.upsert_conversation(chat_id, "AWAITING_DAYOFF_DATE", ctx, history)
-        await query.edit_message_text(_ASK_DATE, parse_mode=ParseMode.HTML)
-    elif data == "dayoff:yes" or data.startswith("dayoff:yes:"):
-        half = data.split(":")[2] if data.count(":") == 2 else None
-        await _create_day_off(query, chat_id, ctx, half_override=half if half in ("am", "pm") else None)
-    elif data == "dayoff:no":
-        await query.edit_message_text("Okay — nothing changed. Type /menu anytime.")
-        await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
-    elif data.startswith("dayoffdelyes:"):
-        await _do_delete(query, chat_id, ctx, int(data.split(":", 1)[1]))
-    elif data.startswith("dayoffdel:"):
-        await _confirm_delete(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
+    try:
+        if data == "menu:dayoff":
+            await _show_dayoff_menu(query, chat_id, ctx, history)
+        elif data == "dayoff:add":
+            await conv_db.upsert_conversation(chat_id, "AWAITING_DAYOFF_DATE", ctx, history)
+            await query.edit_message_text(_ASK_DATE, parse_mode=ParseMode.HTML)
+        elif data == "dayoff:yes" or data.startswith("dayoff:yes:"):
+            half = data.split(":")[2] if data.count(":") == 2 else None
+            await _create_day_off(query, chat_id, ctx, half_override=half if half in ("am", "pm") else None)
+        elif data == "dayoff:no":
+            await query.edit_message_text("Okay — nothing changed. Type /menu anytime.")
+            await conv_db.reset_conversation(chat_id, known_name=ctx.get("organizer_name"))
+        elif data.startswith("dayoffdelyes:"):
+            await _do_delete(query, chat_id, ctx, int(data.split(":", 1)[1]))
+        elif data.startswith("dayoffdel:"):
+            await _confirm_delete(query, chat_id, ctx, history, int(data.split(":", 1)[1]))
+    except BadRequest as e:
+        # Re-tapping a button re-renders an identical message; Telegram rejects that with
+        # "Message is not modified" — harmless, so swallow it instead of surfacing an error.
+        if "not modified" not in str(e).lower():
+            raise
 
 
 async def _show_dayoff_menu(query, chat_id: int, ctx: dict, history: list[dict]) -> None:
