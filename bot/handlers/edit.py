@@ -17,7 +17,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ai.intent import process_turn
+from ai.intent import process_turn, parse_duration_mins
 from bot.handlers import colleague
 from bot.keyboards import (
     booking_list_keyboard,
@@ -282,8 +282,22 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
     duration = meeting["duration_mins"]
     new_start = datetime.fromisoformat(meeting["start_dt"]).astimezone(HKT)
 
-    turn = await process_turn([], text)
-    if field == "datetime":
+    if field == "duration":
+        # A bare duration like "1 hour" or "45" is parsed deterministically — it must
+        # never depend on the LLM correctly classifying a contextless message. Fall back
+        # to the LLM only if the plain parse fails (e.g. an oddly phrased duration).
+        new_duration = parse_duration_mins(text)
+        if new_duration is None:
+            new_duration = (await process_turn([], text)).duration_mins
+        if not new_duration:
+            return await _retry(
+                update,
+                "Sorry, I couldn't understand that duration. Please give a number of "
+                "minutes — e.g. <b>45</b> or <b>1 hour</b>.",
+            )
+        duration = new_duration
+    else:  # datetime
+        turn = await process_turn([], text)
         if not turn.proposed_dt:
             return await _retry(
                 update,
@@ -296,14 +310,6 @@ async def _apply_time_change(update, chat_id, ctx, history, meeting, field, text
         # and wrongly reject a slot the user meant to be shorter.
         if turn.duration_mins:
             duration = turn.duration_mins
-    else:  # duration
-        if not turn.duration_mins:
-            return await _retry(
-                update,
-                "Sorry, I couldn't understand that duration. Please give a number of "
-                "minutes — e.g. <b>45</b> or <b>1 hour</b>.",
-            )
-        duration = turn.duration_mins
 
     if new_start < datetime.now(tz=HKT) - timedelta(hours=1):
         return await _retry(update, "That time has already passed. Please choose a future date and time.")

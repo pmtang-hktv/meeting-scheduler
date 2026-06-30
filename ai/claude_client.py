@@ -13,7 +13,13 @@ _client: anthropic.AsyncAnthropic | None = None
 
 def configure(api_key: str) -> None:
     global _client
-    _client = anthropic.AsyncAnthropic(api_key=api_key)
+    # The SDK retries transient failures (429 rate-limit, 5xx, 529 overloaded, connection
+    # drops, timeouts) with exponential backoff and honours Retry-After. The default of 2
+    # retries is too few when Haiku is briefly overloaded — a single blip then surfaced as
+    # an unhandled exception and the user saw "Sorry, something went wrong". Retry more, and
+    # cap each attempt at 30s so a stalled request fails fast and is retried rather than
+    # hanging on the SDK's 10-minute default.
+    _client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=5, timeout=30.0)
 
 
 async def run_conversation(

@@ -96,6 +96,41 @@ async def test_datetime_edit_adopts_duration_from_a_time_range():
 
 
 @pytest.mark.asyncio
+async def test_duration_edit_parses_one_hour_without_llm():
+    """A bare '1 hour' duration edit must succeed deterministically — never depending on
+    the LLM to classify a contextless message (regression for the 'kept kicking me away')."""
+    import bot.handlers.edit as edit
+
+    meeting = {
+        "id": 91, "requester_chat_id": 555, "status": "confirmed",
+        "calendar_uid": "UID91", "is_external": 0, "travel_mins": 0,
+        "organizer_name": "Pat", "purpose": "QA meeting",
+        "start_dt": hkt(2099, 6, 26, 11, 0).astimezone(ZoneInfo("UTC")).isoformat(),
+        "end_dt": hkt(2099, 6, 26, 11, 30).astimezone(ZoneInfo("UTC")).isoformat(),
+        "duration_mins": 30,
+    }
+
+    update = AsyncMock()
+    captured = {}
+
+    async def fake_update_meeting(mid, **fields):
+        captured.update(fields)
+
+    # process_turn must NOT be needed; if it's called it would (wrongly) yield no duration.
+    llm = AsyncMock(side_effect=AssertionError("LLM should not be needed for '1 hour'"))
+    with patch.object(edit, "process_turn", llm), \
+         patch.object(edit, "check_slot", AsyncMock(return_value={"available": True, "reasons": [], "requires_owner": False})), \
+         patch.object(edit.meet_db, "get_meeting", AsyncMock(return_value=meeting)), \
+         patch.object(edit.meet_db, "update_meeting", fake_update_meeting), \
+         patch.object(edit.cal_svc, "update_event", AsyncMock(return_value=True)), \
+         patch.object(edit.conv_db, "upsert_conversation", AsyncMock()):
+        ctx = {"edit_meeting_id": 91, "edit_field": "duration", "organizer_name": "Pat"}
+        await edit.apply_field_edit(update, None, 555, ctx, [], "1 hour")
+
+    assert captured.get("duration_mins") == 60
+
+
+@pytest.mark.asyncio
 async def test_cancel_deletes_event_and_marks_cancelled():
     import bot.handlers.edit as edit
 
