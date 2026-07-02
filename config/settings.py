@@ -9,6 +9,7 @@ class Settings:
     telegram_bot_token: str
     owner_telegram_id: int
     anthropic_api_key: str
+    anthropic_model: str
     google_maps_api_key: str
     default_calendar_name: str
     db_path: str
@@ -27,6 +28,9 @@ def load_settings() -> Settings:
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         owner_telegram_id=int(_require("OWNER_TELEGRAM_ID")),
         anthropic_api_key=_require("ANTHROPIC_API_KEY"),
+        # Sonnet 4.6 handles messy multi-part requests more reliably than Haiku; override
+        # via ANTHROPIC_MODEL to roll back to e.g. claude-haiku-4-5 without a code change.
+        anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         google_maps_api_key=_require("GOOGLE_MAPS_API_KEY"),
         default_calendar_name=os.getenv("DEFAULT_CALENDAR_NAME", "HKTV"),
         db_path=os.getenv("DB_PATH", "data/bot.db"),

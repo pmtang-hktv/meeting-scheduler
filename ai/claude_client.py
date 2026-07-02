@@ -9,10 +9,14 @@ from ai.tool_executor import ToolResults, execute_tool
 
 logger = logging.getLogger(__name__)
 _client: anthropic.AsyncAnthropic | None = None
+# Default kept in sync with config.settings; overridden at startup via configure().
+_model: str = "claude-sonnet-4-6"
 
 
-def configure(api_key: str) -> None:
-    global _client
+def configure(api_key: str, model: str | None = None) -> None:
+    global _client, _model
+    if model:
+        _model = model
     # The SDK retries transient failures (429 rate-limit, 5xx, 529 overloaded, connection
     # drops, timeouts) with exponential backoff and honours Retry-After. The default of 2
     # retries is too few when Haiku is briefly overloaded — a single blip then surfaced as
@@ -35,7 +39,7 @@ async def run_conversation(
 
     for _ in range(max_iterations):
         response = await _client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=_model,
             system=system,
             messages=current_messages,
             tools=TOOLS,
@@ -99,7 +103,7 @@ async def evaluate_location_reply(
     )
     try:
         response = await _client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=_model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=256,
         )
