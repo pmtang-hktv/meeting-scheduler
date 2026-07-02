@@ -1,8 +1,77 @@
 """Tests for the day-off / leave flow."""
 from __future__ import annotations
+from datetime import date
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
+
+from ai.intent import parse_explicit_dates
+
+
+_TODAY = date(2026, 7, 2)
+
+
+def _spans(text):
+    return [(s["start"], s["end"]) for s in parse_explicit_dates(text, _TODAY)]
+
+
+@pytest.mark.parametrize("text, expected", [
+    # The exact messages from the reported chat that Claude mis-read.
+    ("Jul 3, 6,10 13 in 2026",
+     [("2026-07-03", None), ("2026-07-06", None), ("2026-07-10", None), ("2026-07-13", None)]),
+    ("and Jul 3 and Jul 6 in 2026", [("2026-07-03", None), ("2026-07-06", None)]),
+    ("Jul 3 and Jul 6 in 2026", [("2026-07-03", None), ("2026-07-06", None)]),
+    # Ranges, day-first and month-first.
+    ("6-8 Jul", [("2026-07-06", "2026-07-08")]),
+    ("Jul 6-8", [("2026-07-06", "2026-07-08")]),
+    ("6 to 8 Jul", [("2026-07-06", "2026-07-08")]),
+    # Ordinals and multiple months.
+    ("3rd Jul", [("2026-07-03", None)]),
+    ("Jul 3 and Aug 6", [("2026-07-03", None), ("2026-08-06", None)]),
+    # No explicit month → leave it to the LLM.
+    ("next Friday", []),
+    ("10/7", []),
+    ("Jul 2026", []),
+    # Invalid calendar date is dropped, not guessed.
+    ("Feb 30 2026", []),
+    # A bare month/year without a year rolls a past date into next year.
+    ("Jan 5", [("2027-01-05", None)]),
+])
+def test_parse_explicit_dates(text, expected):
+    assert _spans(text) == expected
+
+
+def test_merge_recovers_dropped_dates():
+    """The screenshot bug: Claude kept only 10 & 13; the parser adds back 3 & 6."""
+    import bot.handlers.day_off as do
+    llm = [{"start": "2026-07-10", "end": None, "half": None},
+           {"start": "2026-07-13", "end": None, "half": None}]
+    merged = do._merge_explicit("Jul 3, 6,10 13 in 2026", llm)
+    assert [(s["start"], s["end"]) for s in merged] == [
+        ("2026-07-03", None), ("2026-07-06", None), ("2026-07-10", None), ("2026-07-13", None)
+    ]
+
+
+def test_merge_preserves_llm_relative_date():
+    """A relative date the parser can't see is kept alongside the explicit one."""
+    import bot.handlers.day_off as do
+    llm = [{"start": "2026-07-10", "end": None, "half": None}]  # LLM's "next Friday"
+    merged = do._merge_explicit("next Friday and Jul 6", llm)
+    starts = sorted(s["start"] for s in merged)
+    assert starts == ["2026-07-06", "2026-07-10"]
+
+
+def test_merge_keeps_half_day_from_llm():
+    import bot.handlers.day_off as do
+    llm = [{"start": "2026-07-03", "end": None, "half": "pm"}]
+    merged = do._merge_explicit("off Jul 3 pm", llm)
+    assert merged == [{"start": "2026-07-03", "end": None, "half": "pm"}]
+
+
+def test_merge_falls_back_when_no_explicit_date():
+    import bot.handlers.day_off as do
+    llm = [{"start": "2026-07-10", "end": None, "half": None}]
+    assert do._merge_explicit("next Friday", llm) is llm
 
 
 def _patches(do, all_day_fn):

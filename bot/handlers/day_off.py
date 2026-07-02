@@ -21,7 +21,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ai.intent import process_turn
+from ai.intent import process_turn, parse_explicit_dates
 from bot.keyboards import (
     cancel_dayoff_keyboard,
     dayoff_confirm_keyboard,
@@ -98,13 +98,50 @@ def _segments_from_turn(turn) -> list:
     return segs
 
 
+def _merge_explicit(text: str, llm_segments: list) -> list:
+    """Combine deterministically-parsed explicit dates with the LLM's segments.
+
+    Claude (Haiku) reliably mis-reads terse date lists like "Jul 3, 6,10 13" or a
+    fragment starting with "and", silently dropping dates. We re-derive any explicit
+    month-name dates ourselves and treat them as authoritative, while keeping LLM
+    segments the parser can't see (relative dates like "next Friday", and any half-day
+    it detected on a matching single day). Falls back to the LLM verbatim when the
+    message has no explicit month-name date.
+    """
+    explicit = parse_explicit_dates(text)
+    if not explicit:
+        return llm_segments
+
+    def _covers(seg: dict, iso: str) -> bool:
+        start = seg["start"]
+        end = seg.get("end") or start
+        return start <= iso <= end
+
+    # Preserve a half-day the LLM found on a single day the parser also produced.
+    for seg in explicit:
+        if seg["end"] is None:
+            for other in llm_segments:
+                if other.get("start") == seg["start"] and not other.get("end") and other.get("half"):
+                    seg["half"] = other["half"]
+                    break
+
+    merged = list(explicit)
+    for other in llm_segments:
+        start = other.get("start")
+        if start and not any(_covers(seg, start) for seg in explicit):
+            merged.append(other)
+    return merged
+
+
 # --------------------------------------------------------------------------- #
 # Entry from colleague.handle_message                                          #
 # --------------------------------------------------------------------------- #
 
 async def start_from_intent(update: Update, chat_id: int, ctx: dict, history: list[dict], turn) -> int:
     name = ctx.get("organizer_name") or turn.day_off_person or turn.organizer_name
-    return await _offer(update, chat_id, ctx, history, _segments_from_turn(turn), name)
+    text = update.message.text if update.message else ""
+    segments = _merge_explicit(text or "", _segments_from_turn(turn))
+    return await _offer(update, chat_id, ctx, history, segments, name)
 
 
 async def handle_followup(update: Update, chat_id: int, ctx: dict, history: list[dict], text: str, state: str) -> int:
@@ -130,7 +167,8 @@ async def handle_followup(update: Update, chat_id: int, ctx: dict, history: list
 
     # AWAITING_DAYOFF_DATE — re-parse the typed date(s) with leave context for reliability.
     parsed = await process_turn([], f"I am taking a day off / on leave on these date(s): {text}")
-    return await _offer(update, chat_id, ctx, history, _segments_from_turn(parsed), ctx.get("organizer_name"))
+    segments = _merge_explicit(text, _segments_from_turn(parsed))
+    return await _offer(update, chat_id, ctx, history, segments, ctx.get("organizer_name"))
 
 
 # --------------------------------------------------------------------------- #

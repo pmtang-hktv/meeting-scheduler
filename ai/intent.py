@@ -68,6 +68,140 @@ def parse_duration_mins(text: str) -> int | None:
     return mins if mins > 0 else None
 
 
+# Month name / abbreviation → month number. Used by the deterministic explicit-date
+# parser below.
+_MONTHS = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+# One left-to-right pass tokenises a message into month names, day ranges ("6-8",
+# "6 to 8"), and bare numbers. Range is tried before num so "6-8" is one token.
+_DATE_TOKEN_RE = re.compile(
+    r"(?P<range>\d{1,2}\s*(?:-|–|—|to|through|thru|until|til|till)\s*\d{1,2})"
+    r"|(?P<month>\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?"
+    r"|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b)"
+    r"|(?P<num>\d{1,4})",
+    re.IGNORECASE,
+)
+_RANGE_SPLIT_RE = re.compile(r"-|–|—|to|through|thru|until|til|till", re.IGNORECASE)
+
+
+def parse_explicit_dates(text: str, today: "date | None" = None) -> list[dict]:
+    """Deterministically extract explicit month-name dates from a message.
+
+    Handles the terse multi-date lists Claude tends to mis-read, e.g.
+    "Jul 3, 6,10 13 in 2026", "6-8 Jul", "Jul 3 and Jul 6", "and Jul 3 and Jul 6".
+    Returns day-off segments [{"start": iso, "end": iso|None, "half": None}] sorted
+    by date. A day number is attached to the month immediately following it (day-first,
+    e.g. "6-8 Jul") otherwise to the most recent month seen (month-first). A 4-digit
+    1900–2100 number is treated as an explicit year applied to every date.
+
+    Only engages when at least one month name is present, so relative expressions
+    ("next Friday", "tomorrow") and slash/locale dates are left for the LLM. Returns []
+    when nothing explicit is found, signalling the caller to fall back to Claude.
+    """
+    from datetime import date as _date
+    today = today or datetime.now(tz=HKT).date()
+
+    # Strip ordinal suffixes ("3rd" → "3") so day numbers tokenise cleanly.
+    cleaned = re.sub(r"(\d{1,2})(?:st|nd|rd|th)\b", r"\1", text, flags=re.IGNORECASE)
+
+    tokens: list[tuple[str, str]] = [
+        (m.lastgroup, m.group(m.lastgroup)) for m in _DATE_TOKEN_RE.finditer(cleaned)
+    ]
+    if not any(kind == "month" for kind, _ in tokens):
+        return []
+
+    year: int | None = None
+    for kind, val in tokens:
+        if kind == "num" and len(val) == 4 and 1900 <= int(val) <= 2100:
+            year = int(val)
+            break
+
+    def _day_range(val: str) -> tuple[int, int] | None:
+        if "-" in val or "–" in val or "—" in val or re.search(r"[a-z]", val, re.IGNORECASE):
+            parts = [p for p in _RANGE_SPLIT_RE.split(val) if p.strip()]
+            if len(parts) == 2:
+                a, b = int(parts[0]), int(parts[1])
+                return (a, b) if a <= b else (b, a)
+            return None
+        n = int(val)
+        return (n, n)
+
+    def _resolve(month: int, day: int) -> "_date | None":
+        yr = year or today.year
+        try:
+            d = _date(yr, month, day)
+        except ValueError:
+            return None
+        # Without an explicit year, roll a past date into next year.
+        if year is None and d < today:
+            try:
+                d = _date(yr + 1, month, day)
+            except ValueError:
+                return None
+        return d
+
+    entries: list[tuple[_date, _date]] = []
+    current_month: int | None = None
+    pending: list[tuple[int, int]] = []  # day-ranges seen before their month
+
+    def _emit(month: int, span: tuple[int, int]) -> None:
+        s = _resolve(month, span[0])
+        e = _resolve(month, span[1])
+        if s and e:
+            entries.append((s, e if e >= s else s))
+
+    for i, (kind, val) in enumerate(tokens):
+        if kind == "month":
+            current_month = _MONTHS.get(val.lower())
+            if current_month:
+                for span in pending:
+                    _emit(current_month, span)
+            pending = []
+            continue
+        if kind == "num" and len(val) == 4 and 1900 <= int(val) <= 2100:
+            continue  # already captured as the year
+        span = _day_range(val)
+        if span is None or not (1 <= span[0] <= 31 and 1 <= span[1] <= 31):
+            continue
+        # A day followed by a month but NOT preceded by one is day-first ("6-8 Jul",
+        # "3 Jul") — attach it to that upcoming month. A day sandwiched after its own
+        # month ("Jul 3 and Aug 6" → 3 belongs to Jul) stays month-first.
+        prev = tokens[i - 1] if i > 0 else None
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+        if nxt and nxt[0] == "month" and not (prev and prev[0] == "month"):
+            target = _MONTHS.get(nxt[1].lower())
+            if target:
+                _emit(target, span)
+                continue
+        if current_month:
+            _emit(current_month, span)
+        else:
+            pending.append(span)
+
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for s, e in sorted(entries):
+        key = (s.isoformat(), e.isoformat())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"start": s.isoformat(), "end": None if e == s else e.isoformat(), "half": None})
+    return out
+
+
 def _named_weekday(text: str) -> int | None:
     """Return the weekday index if the message names exactly one weekday, else None.
 
